@@ -495,8 +495,14 @@
 
         .chord-region.ghost.overlap {
             border-color: #ff4444;
+            background: rgba(255, 68, 68, 0.2);
             color: #ff4444;
-            background: rgba(255, 0, 0, 0.1);
+            cursor: not-allowed;
+        }
+
+        .chord-region.crashing {
+            background: rgba(255, 68, 68, 0.4) !important;
+            border-color: #ff4444 !important;
         }
 
         .chord-resize-handle {
@@ -522,7 +528,19 @@
             z-index: 10;
         }
 
-        .chord-region:hover .chord-delete-btn {
+        .chord-edit-btn {
+            position: absolute;
+            top: 2px;
+            left: 4px;
+            font-size: 8px;
+            color: var(--accent);
+            display: none;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        .chord-region:hover .chord-delete-btn,
+        .chord-region:hover .chord-edit-btn {
             display: block;
         }
 
@@ -927,21 +945,37 @@
                 const x = e.clientX - rect.left + rollEl.scrollLeft;
                 ghostStep = Math.max(0, Math.floor(x / STEP_W));
 
-                // Check overlap
-                isOverlapping = chordRegions.some(r => {
-                    return !(ghostStep + DEFAULT_CHORD_LEN <= r.startStep || ghostStep >= r.startStep + r.lenSteps);
+                let isHoveringExisting = false;
+                chordRegions.forEach(r => {
+                    if (ghostStep >= r.startStep && ghostStep < r.startStep + r.lenSteps) {
+                        isHoveringExisting = true;
+                    }
                 });
+
+                if (isHoveringExisting) {
+                    ghostEl.style.display = 'none';
+                    return;
+                }
+
+                let maxLen = ALL_STEPS - ghostStep;
+                chordRegions.forEach(r => {
+                    if (r.startStep > ghostStep) {
+                        maxLen = Math.min(maxLen, r.startStep - ghostStep);
+                    }
+                });
+
+                const displayLen = Math.max(1, Math.min(DEFAULT_CHORD_LEN, maxLen));
+                isOverlapping = false; // Reset for ghost
 
                 ghostEl.style.display = 'flex';
                 ghostEl.style.left = `${ghostStep * STEP_W}px`;
-                ghostEl.style.width = `${DEFAULT_CHORD_LEN * STEP_W}px`;
+                ghostEl.style.width = `${displayLen * STEP_W}px`;
+                ghostEl.classList.remove('overlap');
+                ghostEl.innerHTML = '+ ADD CHORD';
 
-                if (isOverlapping) {
+                if (displayLen < DEFAULT_CHORD_LEN) { // If it's constrained by another chord
                     ghostEl.classList.add('overlap');
                     ghostEl.innerHTML = 'OVERLAP';
-                } else {
-                    ghostEl.classList.remove('overlap');
-                    ghostEl.innerHTML = '+ ADD CHORD';
                 }
             });
 
@@ -951,8 +985,26 @@
 
             scroll.addEventListener('click', (e) => {
                 if (e.target.closest('.chord-region') && !e.target.classList.contains('ghost')) return;
-                if (isOverlapping || ghostStep < 0) return;
-                openPicker(e, ghostStep);
+
+                let isHoveringExisting = false;
+                chordRegions.forEach(r => {
+                    if (ghostStep >= r.startStep && ghostStep < r.startStep + r.lenSteps) {
+                        isHoveringExisting = true;
+                    }
+                });
+
+                if (isHoveringExisting || ghostStep < 0) return;
+
+                // Calculate actual available length for the new chord
+                let actualLen = ALL_STEPS - ghostStep;
+                chordRegions.forEach(r => {
+                    if (r.startStep > ghostStep) {
+                        actualLen = Math.min(actualLen, r.startStep - ghostStep);
+                    }
+                });
+                actualLen = Math.max(1, Math.min(DEFAULT_CHORD_LEN, actualLen));
+
+                openPicker(e, ghostStep, null, actualLen);
             });
         }
 
@@ -1028,10 +1080,11 @@
             document.getElementById('cpClear').onclick = () => clearBarChord();
         }
 
-        function openPicker(e, step, editId = null) {
+        function openPicker(e, step, editId = null, initialLen = DEFAULT_CHORD_LEN) {
             e.stopPropagation();
             pickerTargetStep = step;
             pickerEditingChordId = editId;
+            pickerInitialLen = initialLen; // Store initial length for new chords
             const picker = document.getElementById('chordPicker');
             picker.classList.add('visible');
 
@@ -1068,7 +1121,7 @@
             if (pickerEditingChordId) {
                 updateChordRegion(pickerEditingChordId, chordDef);
             } else {
-                addChordRegion(pickerTargetStep, chordDef);
+                addChordRegion(pickerTargetStep, chordDef, pickerInitialLen);
             }
             closePicker();
         }
@@ -1080,9 +1133,10 @@
         function closePicker() {
             document.getElementById('chordPicker').classList.remove('visible');
             pickerEditingChordId = null;
+            pickerInitialLen = DEFAULT_CHORD_LEN; // Reset
         }
         document.addEventListener('click', (e) => {
-            if (!document.getElementById('chordPicker').contains(e.target)) closePicker();
+            if (!document.getElementById('chordPicker').contains(e.target) && !e.target.closest('.chord-region')) closePicker();
         });
 
         // Draw preview note on mousedown
@@ -1122,21 +1176,50 @@
         });
 
         window.addEventListener('mouseup', (e) => {
-            if (!isDrawing || !activeNoteEl) return;
+            if (isDrawing) {
+                // Commit note
+                const grid = document.getElementById('pianoGrid');
+                const rect = grid.getBoundingClientRect();
+                const scrollEl = document.getElementById('rollWrapper');
+                const x = e.clientX - rect.left + scrollEl.scrollLeft;
+                const col = Math.max(drawStartCol, Math.floor(x / STEP_W));
+                const len = Math.max(1, col - drawStartCol + 1);
+                const note = { row: drawRow, startStep: drawStartCol, lenSteps: len, id: Date.now() };
+                drawnNotes.push(note);
+                // Re-render final element
+                activeNoteEl.remove();
+                renderNote(note);
+                activeNoteEl = null;
+            }
+
+            if (isResizing && resizeNote) {
+                // Resize logic already updates the note object directly
+            }
+
+            if (isChordDragging) {
+                const r = chordRegions.find(rr => rr.id === chordDragRegionId);
+                if (r) {
+                    r.el.classList.remove('crashing');
+                    const dx = e.clientX - chordDragStartX;
+                    if (Math.abs(dx) < 3) {
+                        // Small movement: preview click
+                        initAudio();
+                        playChordNotes(r.chordDef.notes, audioCtx.currentTime, 0.9);
+                    }
+                }
+            }
+            if (isChordResizing) {
+                const r = chordRegions.find(rr => rr.id === chordResizeRegionId);
+                if (r) r.el.classList.remove('crashing');
+            }
+
             isDrawing = false;
-            // Commit note
-            const grid = document.getElementById('pianoGrid');
-            const rect = grid.getBoundingClientRect();
-            const scrollEl = document.getElementById('rollWrapper');
-            const x = e.clientX - rect.left + scrollEl.scrollLeft;
-            const col = Math.max(drawStartCol, Math.floor(x / STEP_W));
-            const len = Math.max(1, col - drawStartCol + 1);
-            const note = { row: drawRow, startStep: drawStartCol, lenSteps: len, id: Date.now() };
-            drawnNotes.push(note);
-            // Re-render final element
-            activeNoteEl.remove();
-            renderNote(note);
-            activeNoteEl = null;
+            isResizing = false;
+            isChordDragging = false;
+            isChordResizing = false;
+            resizeNote = null;
+            chordDragRegionId = null;
+            chordResizeRegionId = null;
         });
 
         function positionNoteEl(el, row, startCol, len) {
@@ -1216,44 +1299,95 @@
                 if (el) el.style.width = `${newLen * STEP_W - 2}px`;
             } else if (isChordResizing && chordResizeRegionId) {
                 const dx = ev.clientX - chordResizeStartX;
-                const newSteps = Math.max(1, chordResizeOrigSteps + Math.round(dx / STEP_W));
+                let newSteps = Math.max(1, chordResizeOrigSteps + Math.round(dx / STEP_W));
                 const r = chordRegions.find(rr => rr.id === chordResizeRegionId);
                 if (r) {
-                    r.lenSteps = newSteps;
-                    r.el.style.width = `${newSteps * STEP_W}px`;
+                    let maxLen = ALL_STEPS - r.startStep;
+                    chordRegions.forEach(other => {
+                        if (other.id !== r.id && other.startStep > r.startStep && other.startStep < r.startStep + newSteps) {
+                            maxLen = Math.min(maxLen, other.startStep - r.startStep);
+                        }
+                    });
+
+                    let isCrashing = false;
+                    if (newSteps > maxLen) {
+                        newSteps = maxLen;
+                        isCrashing = true;
+                    }
+
+                    if (r.lenSteps !== newSteps) {
+                        r.lenSteps = newSteps;
+                        r.el.style.width = `${newSteps * STEP_W}px`;
+                    }
+                    if (isCrashing) r.el.classList.add('crashing');
+                    else r.el.classList.remove('crashing');
                 }
             } else if (isChordDragging && chordDragRegionId) {
                 const dx = ev.clientX - chordDragStartX;
                 const dSteps = Math.round(dx / STEP_W);
                 const r = chordRegions.find(rr => rr.id === chordDragRegionId);
                 if (r) {
-                    const newStart = Math.max(0, chordDragOrigStep + dSteps);
+                    let newStart = Math.max(0, chordDragOrigStep + dSteps);
+
+                    let minStart = 0;
+                    let maxStart = ALL_STEPS - r.lenSteps;
+
+                    chordRegions.forEach(other => {
+                        if (other.id !== r.id) {
+                            if (other.startStep < chordDragOrigStep) {
+                                minStart = Math.max(minStart, other.startStep + other.lenSteps);
+                            } else if (other.startStep > chordDragOrigStep) {
+                                maxStart = Math.min(maxStart, other.startStep - r.lenSteps);
+                            }
+                        }
+                    });
+
+                    let isCrashing = false;
+                    if (newStart < minStart) {
+                        newStart = minStart;
+                        isCrashing = true;
+                    } else if (newStart > maxStart) {
+                        newStart = maxStart;
+                        isCrashing = true;
+                    }
+
                     if (r.startStep !== newStart) {
                         r.startStep = newStart;
                         r.el.style.left = `${newStart * STEP_W}px`;
                     }
+                    if (isCrashing) r.el.classList.add('crashing');
+                    else r.el.classList.remove('crashing');
                 }
             }
         });
 
         window.addEventListener('mouseup', (ev) => {
+            if (isDrawing || isResizing) {
+                // Let other listeners handle
+            }
             if (isChordDragging) {
-                const dx = ev.clientX - chordDragStartX;
-                if (Math.abs(dx) < 3) {
-                    // Small movement: preview click
-                    const r = chordRegions.find(rr => rr.id === chordDragRegionId);
-                    if (r) {
+                const r = chordRegions.find(rr => rr.id === chordDragRegionId);
+                if (r) {
+                    r.el.classList.remove('crashing');
+                    const dx = ev.clientX - chordDragStartX;
+                    if (Math.abs(dx) < 3) {
+                        // Small movement: preview click
                         initAudio();
                         playChordNotes(r.chordDef.notes, audioCtx.currentTime, 0.9);
                     }
                 }
             }
+            if (isChordResizing) {
+                const r = chordRegions.find(rr => rr.id === chordResizeRegionId);
+                if (r) r.el.classList.remove('crashing');
+            }
+            isDrawing = false;
             isResizing = false;
-            resizeNote = null;
-            isChordResizing = false;
-            chordResizeRegionId = null;
             isChordDragging = false;
+            isChordResizing = false;
+            resizeNote = null;
             chordDragRegionId = null;
+            chordResizeRegionId = null;
         });
 
         // ─── AUDIO  — Piano-like timbre ───────────────────────
@@ -1612,31 +1746,39 @@
             const id = 'chord_' + Date.now();
             region.className = 'chord-region';
             const startStep = step;
+
+            let maxLen = ALL_STEPS - step;
+            chordRegions.forEach(r => {
+                if (r.startStep > step) {
+                    maxLen = Math.min(maxLen, r.startStep - step);
+                }
+            });
+            const actualLen = Math.max(1, Math.min(DEFAULT_CHORD_LEN, maxLen));
+
             region.style.left = `${startStep * STEP_W}px`;
-            region.style.width = `${DEFAULT_CHORD_LEN * STEP_W}px`;
+            region.style.width = `${actualLen * STEP_W}px`;
             region.textContent = chordDef.label;
 
             // Preview and drag on mousedown
             region.addEventListener('mousedown', (e) => {
-                if (e.target.classList.contains('chord-resize-handle') || e.target.classList.contains('chord-delete-btn')) return;
+                if (e.target.classList.contains('chord-resize-handle') || e.target.classList.contains('chord-delete-btn') || e.target.classList.contains('chord-edit-btn')) return;
                 startChordDrag(e, id);
             });
 
-            // Double click to edit (opens picker but leaves current)
-            region.addEventListener('dblclick', (e) => {
-                // Ignore if clicked on a button
-                if (e.target.classList.contains('chord-delete-btn') ||
-                    e.target.classList.contains('chord-trans-btn') ||
-                    e.target.classList.contains('chord-resize-handle')) return;
-
+            // Add Top-Left edit button
+            const editBtn = document.createElement('div');
+            editBtn.className = 'chord-edit-btn';
+            editBtn.innerHTML = '✎';
+            editBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
 
                 // Find current startStep as it might have been dragged
                 const currentRegion = chordRegions.find(r => r.id === id);
                 if (currentRegion) {
-                    openPicker(e, currentRegion.startStep, id);
+                    openPicker(e, currentRegion.startStep, id, currentRegion.lenSteps);
                 }
             });
+            region.appendChild(editBtn);
 
             // Add Top-Right delete button
             const delBtn = document.createElement('div');
@@ -1679,7 +1821,7 @@
             chordRegions.push({
                 id,
                 startStep,
-                lenSteps: DEFAULT_CHORD_LEN,
+                lenSteps: actualLen,
                 chordDef,
                 el: region
             });
