@@ -936,6 +936,7 @@
             scroll.appendChild(ghostEl);
 
             scroll.addEventListener('mousemove', (e) => {
+                if (document.getElementById('chordPicker').classList.contains('visible')) return;
                 if (isChordDragging || isChordResizing) {
                     ghostEl.style.display = 'none';
                     return;
@@ -972,14 +973,10 @@
                 ghostEl.style.width = `${displayLen * STEP_W}px`;
                 ghostEl.classList.remove('overlap');
                 ghostEl.innerHTML = '+ ADD CHORD';
-
-                if (displayLen < DEFAULT_CHORD_LEN) { // If it's constrained by another chord
-                    ghostEl.classList.add('overlap');
-                    ghostEl.innerHTML = 'OVERLAP';
-                }
             });
 
             scroll.addEventListener('mouseleave', () => {
+                if (document.getElementById('chordPicker').classList.contains('visible')) return;
                 ghostEl.style.display = 'none';
             });
 
@@ -1134,6 +1131,7 @@
             document.getElementById('chordPicker').classList.remove('visible');
             pickerEditingChordId = null;
             pickerInitialLen = DEFAULT_CHORD_LEN; // Reset
+            if (ghostEl) ghostEl.style.display = 'none';
         }
         document.addEventListener('click', (e) => {
             if (!document.getElementById('chordPicker').contains(e.target) && !e.target.closest('.chord-region')) closePicker();
