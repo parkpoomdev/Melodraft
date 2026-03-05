@@ -420,6 +420,17 @@
             font-size: 0.6rem;
             border-bottom: 1px solid #2a2a2a;
             user-select: none;
+            cursor: pointer;
+        }
+
+        .note-label:hover {
+            background: var(--accent-dim) !important;
+            color: var(--accent) !important;
+        }
+
+        .note-label:active {
+            background: var(--accent) !important;
+            color: var(--bg) !important;
         }
 
         .note-label.black-key {
@@ -650,6 +661,157 @@
             pointer-events: none;
             left: 0;
         }
+
+        /* ─── Playlist Styles ─── */
+        .playlist-track {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            overflow-x: auto;
+            background: var(--surface);
+        }
+
+        .playlist-item {
+            flex-shrink: 0;
+            width: 120px;
+            height: 70px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: grab;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono';
+            font-size: 0.7rem;
+            color: var(--text-dim);
+        }
+
+        .playlist-item.dragging {
+            opacity: 0.5;
+            background: var(--surface2);
+            border: 1px dashed var(--accent);
+        }
+
+        .playlist-item-progress {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 3px;
+            width: 0%; /* Initially 0 */
+            background: var(--accent);
+            pointer-events: none;
+            transition: width 0.05s linear;
+        }
+        
+        .playlist-item-delete {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            font-size: 8px;
+            color: #ff4444;
+            cursor: pointer;
+            display: none;
+            z-index: 10;
+        }
+
+        .playlist-item:hover .playlist-item-delete {
+            display: block;
+        }
+
+        .playlist-item-edit {
+            position: absolute;
+            bottom: 2px;
+            right: 2px;
+            font-size: 8px;
+            color: #44ff44;
+            cursor: pointer;
+            display: none;
+            z-index: 10;
+        }
+
+        .playlist-item:hover .playlist-item-edit {
+            display: block;
+        }
+
+        .playlist-item-save {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            color: #ffff44;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        .playlist-add-btn {
+            flex-shrink: 0;
+            width: 50px;
+            height: 70px;
+            background: transparent;
+            border: 1px dashed var(--text-dim);
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .playlist-add-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 300px;
+            text-align: center;
+            color: var(--text);
+        }
+
+        .modal-buttons {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .modal-buttons button {
+            padding: 8px 16px;
+            border: 1px solid var(--border);
+            background: var(--surface2);
+            color: var(--text);
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        .modal-buttons button:hover {
+            background: var(--accent);
+            color: var(--bg);
+        }
     </style>
 </head>
 
@@ -666,9 +828,14 @@
                     <button class="tb-btn accent" id="playBtn" onclick="togglePlay()">PLAY</button>
                     <button class="tb-btn" onclick="stopTransport()">STOP</button>
                     <button class="tb-btn" id="loopBtn" onclick="toggleLoop()">LOOP</button>
+                    <button class="tb-btn" id="metroBtn" onclick="toggleMetronome()">METRO</button>
                     <div class="tb-sep"></div>
                     <span class="tb-label">BPM</span>
                     <input class="bpm-input" type="number" id="bpmInput" value="120" min="40" max="240">
+                    <div class="tb-sep"></div>
+                    <button class="tb-btn" onclick="clearSequencer()">CLEAR</button>
+                    <div class="tb-sep"></div>
+                    <button class="tb-btn" onclick="addToPlaylist()">ADD TO PLAYLIST</button>
                 </div>
             </div>
 
@@ -685,6 +852,23 @@
                 </div>
             </div><!-- /roll-wrapper -->
         </div><!-- /composer-card -->
+
+        <!-- ─── Playlist Card ─── -->
+        <div class="composer-card" style="margin-top: 20px; min-height: 150px; height: auto;">
+            <div class="card-header">
+                <span class="card-badge">MODULE // ARRANGER</span>
+                <span class="card-title">Playlist</span>
+                <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+                    <button class="tb-btn accent" id="playlistPlayBtn" onclick="togglePlaylistPlay()">PLAY</button>
+                    <button class="tb-btn" onclick="stopPlaylist()">STOP</button>
+                    <button class="tb-btn" id="playlistLoopBtn" onclick="togglePlaylistLoop()">REPEAT</button>
+                </div>
+            </div>
+            <div class="playlist-track" id="playlistTrack">
+                 <!-- Playlist items will be added here -->
+                 <div class="playlist-add-btn" onclick="addNewEmptyComposition()">+</div>
+            </div>
+        </div>
     </main>
 
     <!-- ─── Chord Picker Popup ─── -->
@@ -750,7 +934,7 @@
                 <button onclick="previewCustomChord()"
                     style="flex:1; background:var(--surface2); border:1px solid var(--border); color:var(--text-dim); font-family:'JetBrains Mono'; font-size:0.68rem; padding:5px; border-radius:3px; cursor:pointer;">▶
                     PREVIEW</button>
-                <button onclick="addCustomChord()"
+                <button id="cpAddBtn" onclick="addCustomChord()"
                     style="flex:1; background:var(--accent); border:1px solid var(--accent); color:#000; font-family:'JetBrains Mono'; font-size:0.68rem; font-weight:700; padding:5px; border-radius:3px; cursor:pointer;">+
                     ADD</button>
             </div>
@@ -854,6 +1038,7 @@
         let drawnNotes = [];
         let isPlaying = false;
         let isLooping = false;
+        let isMetronomeOn = false;
         let playheadPos = 0;
         let lastStep = -1;
         let audioCtx = null;
@@ -886,6 +1071,17 @@
         const DEFAULT_CHORD_LEN = 16;
         let ghostEl = null;
 
+        // Playlist State
+        let playlist = []; // Array of composition objects { id, chordRegions, drawnNotes }
+        let currentEditingId = null;
+        let isPlaylistPlaying = false;
+        let isPlaylistLooping = false;
+        let playlistStartTime = 0;
+        let playlistPauseTime = 0;
+        let lastPlaylistStep = -1;
+        let draggedPlaylistItem = null;
+        let playlistPlayheadEl = null;
+
         // ─── INIT ────────────────────────────────────────────
         function init() {
             // Resize card/grid to fit 4 bars into horizontal layout
@@ -911,6 +1107,11 @@
                 const div = document.createElement('div');
                 div.className = 'note-label ' + (n.type === 'black' ? 'black-key' : 'white-key') + (n.isC ? ' c-key' : '');
                 div.textContent = n.name.replace(/\d/, '') + n.name.match(/\d/);
+                div.addEventListener('mousedown', () => {
+                    initAudio();
+                    const freq = NOTE_FREQ[n.name];
+                    if (freq) playNote(freq, audioCtx.currentTime, 0.5);
+                });
                 col.appendChild(div);
             });
         }
@@ -1085,8 +1286,13 @@
             const picker = document.getElementById('chordPicker');
             picker.classList.add('visible');
 
-            // Clear input on open
+            const addButton = document.getElementById('cpAddBtn');
+
+            // Clear inputs on open
             const txtInput = document.getElementById('cpTextInput');
+            const extraInput = document.getElementById('cpExtra');
+            if (extraInput) extraInput.value = '';
+
             if (txtInput) {
                 txtInput.value = '';
                 // Focus it for immediate typing
@@ -1097,19 +1303,73 @@
             picker.style.top = (e.clientY + 12) + 'px';
             picker.style.left = Math.min(e.clientX, window.innerWidth - 280) + 'px';
 
-            // Setup keyboard listener for input
-            txtInput.onkeydown = (ev) => {
-                if (ev.key === 'Enter') {
-                    ev.preventDefault();
-                    addCustomChord();
-                } else if (ev.key === 'ArrowUp') {
-                    ev.preventDefault();
-                    changeOctave(1);
-                } else if (ev.key === 'ArrowDown') {
-                    ev.preventDefault();
-                    changeOctave(-1);
+            // If editing an existing chord, populate the dropdowns
+            if (editId) {
+                addButton.innerHTML = '✓ UPDATE';
+                const region = chordRegions.find(r => r.id === editId);
+                if (region && region.chordDef) {
+                    const match = region.chordDef.label.match(/^([A-G]#?)(m|Maj|dim|aug|sus2|sus4|m7|Maj7|7|9|m9|Maj9|Δ7)?/i);
+                    if (match) {
+                        const cpRoot = document.getElementById('cpRoot');
+                        if (cpRoot) {
+                            let rootVal = match[1].toUpperCase();
+                            for (let i = 0; i < cpRoot.options.length; i++) {
+                                if (cpRoot.options[i].value === rootVal) {
+                                    cpRoot.selectedIndex = i;
+                                    break;
+                                }
+                            }
+                        }
+                        const cpType = document.getElementById('cpType');
+                        if (cpType) {
+                            let typeVal = match[2] || 'Maj';
+                            if (typeVal === 'Δ7') typeVal = 'Maj7';
+                            if (typeVal.toLowerCase() === 'maj') typeVal = 'Maj';
+                            if (typeVal.toLowerCase() === 'm') typeVal = 'm';
+                            for (let i = 0; i < cpType.options.length; i++) {
+                                if (cpType.options[i].value.toLowerCase() === typeVal.toLowerCase()) {
+                                    cpType.selectedIndex = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    const octMatch = region.chordDef.label.match(/\[(\d+)\]/);
+                    let oct = 4;
+                    if (octMatch) {
+                        oct = parseInt(octMatch[1]);
+                    } else if (region.chordDef.notes && region.chordDef.notes.length > 0) {
+                        const firstNoteMatch = region.chordDef.notes[0].match(/\d+/);
+                        if (firstNoteMatch) oct = parseInt(firstNoteMatch[0]);
+                    }
+                    const cpOctave = document.getElementById('cpOctave');
+                    if (cpOctave) {
+                        cpOctave.innerText = oct;
+                    }
                 }
-            };
+            } else {
+                addButton.innerHTML = '+ ADD';
+                const cpOctave = document.getElementById('cpOctave');
+                if (cpOctave) {
+                    cpOctave.innerText = '3';
+                }
+            }
+
+            // Setup keyboard listener for input
+            if (txtInput) {
+                txtInput.onkeydown = (ev) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        addCustomChord();
+                    } else if (ev.key === 'ArrowUp') {
+                        ev.preventDefault();
+                        changeOctave(1);
+                    } else if (ev.key === 'ArrowDown') {
+                        ev.preventDefault();
+                        changeOctave(-1);
+                    }
+                };
+            }
         }
 
         function assignChord(chordIdx) {
@@ -1441,6 +1701,22 @@
             });
         }
 
+        // Play a metronome click
+        function playMetronomeClick(when, isDownbeat) {
+            const master = audioCtx.createGain();
+            master.gain.setValueAtTime(0, when);
+            master.gain.linearRampToValueAtTime(0.3, when + 0.005);
+            master.gain.exponentialRampToValueAtTime(0.001, when + 0.1);
+            master.connect(audioCtx.destination);
+
+            const osc = audioCtx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(isDownbeat ? 1200 : 880, when);
+            osc.connect(master);
+            osc.start(when);
+            osc.stop(when + 0.1);
+        }
+
         // ─── TRANSPORT ───────────────────────────────────────
         function togglePlay() {
             initAudio();
@@ -1467,6 +1743,13 @@
             const btn = document.getElementById('loopBtn');
             btn.style.color = isLooping ? 'var(--accent)' : '';
             btn.style.borderColor = isLooping ? 'var(--accent)' : '';
+        }
+
+        function toggleMetronome() {
+            isMetronomeOn = !isMetronomeOn;
+            const btn = document.getElementById('metroBtn');
+            btn.style.color = isMetronomeOn ? 'var(--accent)' : '';
+            btn.style.borderColor = isMetronomeOn ? 'var(--accent)' : '';
         }
 
         // Timeline navigation – click on grid to jump playback position
@@ -1551,6 +1834,11 @@
             const currentStep = Math.floor(playheadPos / STEP_W);
             if (currentStep !== lastStep) {
                 lastStep = currentStep;
+
+                if (isMetronomeOn && currentStep % 4 === 0) {
+                    playMetronomeClick(audioCtx.currentTime, currentStep % STEPS === 0);
+                }
+
                 // Drawn MIDI notes
                 drawnNotes.forEach(n => {
                     if (n.startStep === currentStep) {
@@ -1661,7 +1949,7 @@
             if (type.toLowerCase() === 'maj7') type = 'Maj7';
             if (type.toLowerCase() === 'm7') type = 'm7';
 
-            const oct = 4; // Default octave
+            const oct = 3; // Default octave
 
             // Fallback interval logic for 9ths just in case
             if (type === '9') CHORD_INTERVALS['9'] = [0, 4, 7, 10, 14];
@@ -1684,8 +1972,8 @@
             const root = document.getElementById('cpRoot').value;
             const type = document.getElementById('cpType').value;
             const cpOct = document.getElementById('cpOctave');
-            const octStr = cpOct ? cpOct.innerText : "4";
-            const oct = parseInt(octStr) || 4;
+            const octStr = cpOct ? cpOct.innerText : "3";
+            const oct = parseInt(octStr) || 3;
             const extra = document.getElementById('cpExtra').value.trim();
             let notes = buildCustomChordNotes(root, type, oct);
             if (extra) {
@@ -1700,7 +1988,7 @@
         function changeOctave(dir) {
             const el = document.getElementById('cpOctave');
             if (!el) return;
-            let val = parseInt(el.innerText) || 4;
+            let val = parseInt(el.innerText) || 3;
             val += dir;
             if (val < 2) val = 2;
             if (val > 6) val = 6;
@@ -1831,8 +2119,375 @@
         // Sync Scroll logic obsolete due to CSS sticky
 
         // ─── START ───────────────────────────────────────────
+        
+        // ─── PLAYLIST LOGIC ───────────────────────────────────
+        function addToPlaylist() {
+            // Deep copy of the current composition
+            const newComposition = {
+                id: 'comp_' + Date.now(),
+                chordRegions: JSON.parse(JSON.stringify(chordRegions.map(r => ({...r, el: null})))),
+                drawnNotes: JSON.parse(JSON.stringify(drawnNotes))
+            };
+            playlist.push(newComposition);
+            renderPlaylist();
+        }
+
+        function addNewEmptyComposition() {
+            const newComposition = {
+                id: 'comp_' + Date.now(),
+                chordRegions: [],
+                drawnNotes: []
+            };
+            playlist.push(newComposition);
+            renderPlaylist();
+        }
+
+        function loadComposition(comp) {
+            // Clear existing chord regions and notes
+            document.querySelectorAll('.chord-region').forEach(el => el.remove());
+            document.querySelectorAll('.note-block').forEach(el => el.remove());
+
+            // Set globals
+            chordRegions = comp.chordRegions.map(r => ({ ...r }));
+            drawnNotes = comp.drawnNotes.map(n => ({ ...n }));
+
+            // Re-render chord regions
+            const track = document.getElementById('barsHeaderScroll');
+            chordRegions.forEach(r => {
+                const region = document.createElement('div');
+                region.className = 'chord-region';
+                region.style.left = `${r.startStep * STEP_W}px`;
+                region.style.width = `${r.lenSteps * STEP_W}px`;
+                region.textContent = r.chordDef.label;
+
+                region.addEventListener('mousedown', (e) => {
+                    if (e.target.classList.contains('chord-resize-handle') || e.target.classList.contains('chord-delete-btn') || e.target.classList.contains('chord-edit-btn')) return;
+                    startChordDrag(e, r.id);
+                });
+
+                // Add edit button
+                const editBtn = document.createElement('div');
+                editBtn.className = 'chord-edit-btn';
+                editBtn.innerHTML = '✎';
+                editBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openPicker(e, r.startStep, r.id, r.lenSteps);
+                });
+                region.appendChild(editBtn);
+
+                // Add delete button
+                const delBtn = document.createElement('div');
+                delBtn.className = 'chord-delete-btn';
+                delBtn.innerHTML = '✕';
+                delBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    chordRegions = chordRegions.filter(reg => reg.id !== r.id);
+                    region.remove();
+                });
+                region.appendChild(delBtn);
+
+                // Add transpose buttons
+                const transUpBtn = document.createElement('div');
+                transUpBtn.className = 'chord-trans-btn trans-up';
+                transUpBtn.innerHTML = '▲';
+                transUpBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    transposeChordRegion(r.id, 1);
+                });
+                region.appendChild(transUpBtn);
+
+                const transDownBtn = document.createElement('div');
+                transDownBtn.className = 'chord-trans-btn trans-down';
+                transDownBtn.innerHTML = '▼';
+                transDownBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    transposeChordRegion(r.id, -1);
+                });
+                region.appendChild(transDownBtn);
+
+                // Add resize handle
+                const handle = document.createElement('div');
+                handle.className = 'chord-resize-handle';
+                handle.addEventListener('mousedown', (e) => startChordResize(e, r.id));
+                region.appendChild(handle);
+
+                r.el = region;
+                track.appendChild(region);
+            });
+
+            // Re-render notes
+            drawnNotes.forEach(n => renderNote(n));
+        }
+
+        function clearSequencer() {
+            document.getElementById('confirmModal').style.display = 'flex';
+        }
+
+        function renderPlaylist() {
+            const track = document.getElementById('playlistTrack');
+            track.querySelectorAll('.playlist-item').forEach(el => el.remove());
+
+            playlist.forEach((comp, index) => {
+                const item = document.createElement('div');
+                item.className = 'playlist-item';
+                item.dataset.compositionId = comp.id;
+                item.draggable = true;
+
+                const chordContainer = document.createElement('div');
+                chordContainer.style.cssText = 'display: flex; justify-content: space-around; width: 100%;';
+                
+                if (currentEditingId === comp.id) {
+                    chordContainer.style.display = 'none';
+                    const saveBtn = document.createElement('div');
+                    saveBtn.className = 'playlist-item-save';
+                    saveBtn.innerHTML = '💾';
+                    saveBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        comp.chordRegions = chordRegions.map(r => ({ ...r, el: undefined }));
+                        comp.drawnNotes = drawnNotes.map(n => ({ ...n }));
+                        currentEditingId = null;
+                        renderPlaylist();
+                    });
+                    item.appendChild(saveBtn);
+                } else {
+                    if (comp.chordRegions.length > 0) {
+                        // Sort chords by start time to display them in order
+                        const sortedChords = [...comp.chordRegions].sort((a, b) => a.startStep - b.startStep);
+                        let label = sortedChords.map(c => c.chordDef.label.replace(/\[\d\]/,'')).join(' | ');
+                        chordContainer.textContent = label;
+                    } else {
+                        chordContainer.textContent = `P-${index + 1}`;
+                    }
+                }
+                item.appendChild(chordContainer);
+
+                const progressBar = document.createElement('div');
+                progressBar.className = 'playlist-item-progress';
+                item.appendChild(progressBar);
+
+                item.addEventListener('dragstart', onDragStart);
+                item.addEventListener('dragenter', onDragEnter);
+                item.addEventListener('dragleave', onDragLeave);
+                item.addEventListener('dragover', onDragOver);
+                item.addEventListener('drop', onDrop);
+                item.addEventListener('dragend', onDragEnd);
+
+                item.addEventListener('click', () => {
+                    loadComposition(comp);
+                    if (isPlaying) stopTransport();
+                    togglePlay();
+                });
+
+                const deleteBtn = document.createElement('div');
+                deleteBtn.className = 'playlist-item-delete';
+                deleteBtn.innerHTML = '✕';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    playlist = playlist.filter(c => c.id !== comp.id);
+                    renderPlaylist();
+                });
+                item.appendChild(deleteBtn);
+
+                if (currentEditingId !== comp.id) {
+                    const editBtn = document.createElement('div');
+                    editBtn.className = 'playlist-item-edit';
+                    editBtn.innerHTML = '✎';
+                    editBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        loadComposition(comp);
+                        currentEditingId = comp.id;
+                        renderPlaylist();
+                    });
+                    item.appendChild(editBtn);
+                }
+
+                track.insertBefore(item, document.querySelector('.playlist-add-btn'));
+            });
+        }
+
+        function onDragStart(e) {
+            draggedPlaylistItem = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', this.dataset.compositionId);
+        }
+        
+        function onDragEnter(e) {
+             e.preventDefault();
+        }
+
+        function onDragLeave(e) {
+            e.preventDefault();
+        }
+
+        function onDragOver(e) {
+            e.preventDefault(); 
+        }
+
+        function onDrop(e) {
+            e.preventDefault();
+            const draggedId = e.dataTransfer.getData('text/plain');
+            const targetId = this.dataset.compositionId;
+
+            const draggedIndex = playlist.findIndex(c => c.id === draggedId);
+            const targetIndex = playlist.findIndex(c => c.id === targetId);
+
+            if (draggedIndex !== -1 && targetIndex !== -1) {
+                const [draggedItem] = playlist.splice(draggedIndex, 1);
+                playlist.splice(targetIndex, 0, draggedItem);
+                renderPlaylist();
+            }
+        }
+
+        function onDragEnd(e) {
+            this.classList.remove('dragging');
+            draggedPlaylistItem = null;
+        }
+
+        function togglePlaylistPlay() {
+            initAudio();
+            isPlaylistPlaying = !isPlaylistPlaying;
+
+            if (isPlaylistPlaying) {
+                document.getElementById('playlistPlayBtn').textContent = 'PAUSE';
+                if (playlistPauseTime > 0) {
+                    playlistStartTime += (audioCtx.currentTime - playlistPauseTime);
+                } else {
+                    playlistStartTime = audioCtx.currentTime;
+                }
+                requestAnimationFrame(playlistTransport);
+            } else {
+                document.getElementById('playlistPlayBtn').textContent = 'PLAY';
+                playlistPauseTime = audioCtx.currentTime;
+            }
+        }
+
+        function stopPlaylist() {
+            isPlaylistPlaying = false;
+            playlistPauseTime = 0;
+            lastPlaylistStep = -1;
+            if (playlistPlayheadEl) playlistPlayheadEl.style.left = '0px';
+            document.querySelectorAll('.playlist-item-progress').forEach(el => el.style.width = '0%');
+            document.getElementById('playlistPlayBtn').textContent = 'PLAY';
+        }
+
+        function togglePlaylistLoop() {
+            isPlaylistLooping = !isPlaylistLooping;
+            const btn = document.getElementById('playlistLoopBtn');
+            btn.style.color = isPlaylistLooping ? 'var(--accent)' : '';
+            btn.style.borderColor = isPlaylistLooping ? 'var(--accent)' : '';
+        }
+
+        function playlistTransport() {
+            if (!isPlaylistPlaying) return;
+
+            const totalPlaylistSteps = playlist.length * ALL_STEPS;
+            if (totalPlaylistSteps === 0) {
+                stopPlaylist();
+                return;
+            }
+
+            const bpm = parseInt(document.getElementById('bpmInput').value) || 120;
+            const stepDuration = (60 / bpm) / 4;
+            const totalDuration = totalPlaylistSteps * stepDuration;
+
+            const elapsedTime = audioCtx.currentTime - playlistStartTime;
+
+            if (elapsedTime >= totalDuration) {
+                if (isPlaylistLooping) {
+                    playlistStartTime = audioCtx.currentTime;
+                } else {
+                    stopPlaylist();
+                    return;
+                }
+            }
+            
+            const currentStepTotal = Math.floor(elapsedTime / stepDuration);
+
+            // Update global playhead
+            const playlistStepW = 120 / STEPS;
+            const playlistPlayheadPos = (elapsedTime / totalDuration) * (playlist.length * 120);
+            if (playlistPlayheadEl) {
+                playlistPlayheadEl.style.left = `${playlistPlayheadPos}px`;
+            }
+
+
+            if (currentStepTotal !== lastPlaylistStep) {
+                lastPlaylistStep = currentStepTotal;
+                
+                // Update progress bars
+                document.querySelectorAll('.playlist-item-progress').forEach(el => el.style.width = '0%');
+
+                const compIndex = Math.floor(currentStepTotal / ALL_STEPS);
+                const stepInComp = currentStepTotal % ALL_STEPS;
+                const currentComp = playlist[compIndex];
+
+                if (currentComp) {
+                    const currentItemEl = document.querySelector(`.playlist-item[data-composition-id="${currentComp.id}"]`);
+                    if (currentItemEl) {
+                        const progressBar = currentItemEl.querySelector('.playlist-item-progress');
+                        if (progressBar) {
+                           const progress = ((stepInComp + 1) / ALL_STEPS) * 100;
+                           progressBar.style.width = `${progress}%`;
+                        }
+                    }
+                    
+                    if (isMetronomeOn && currentStepTotal % 4 === 0) {
+                        playMetronomeClick(audioCtx.currentTime, currentStepTotal % STEPS === 0);
+                    }
+
+                    // Drawn MIDI notes
+                    currentComp.drawnNotes.forEach(n => {
+                        if (n.startStep === stepInComp) {
+                            const freq = NOTE_FREQ[ALL_NOTES[n.row].name];
+                            const dur = n.lenSteps * stepDuration;
+                            if (freq) playNote(freq, audioCtx.currentTime, dur * 0.9);
+                        }
+                    });
+                    // Region chords
+                    currentComp.chordRegions.forEach(r => {
+                        if (r.startStep === stepInComp) {
+                            playChordNotes(r.chordDef.notes, audioCtx.currentTime, 1.2);
+                        }
+                    });
+                }
+            }
+            
+            requestAnimationFrame(playlistTransport);
+        }
+
+
         init();
+
     </script>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal">
+        <div class="modal-content">
+            <p>Are you sure you want to clear the sequencer?</p>
+            <div class="modal-buttons">
+                <button id="confirmYes">Yes</button>
+                <button id="confirmNo">No</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('confirmYes').addEventListener('click', () => {
+            chordRegions.forEach(r => r.el && r.el.remove());
+            chordRegions = [];
+            document.querySelectorAll('.note-block').forEach(el => el.remove());
+            drawnNotes = [];
+            currentEditingId = null;
+            renderPlaylist();
+            document.getElementById('confirmModal').style.display = 'none';
+        });
+
+        document.getElementById('confirmNo').addEventListener('click', () => {
+            document.getElementById('confirmModal').style.display = 'none';
+        });
+    </script>
+
 </body>
 
 </html>
