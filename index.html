@@ -214,6 +214,12 @@
             min-width: max-content;
             height: 20px;
             box-sizing: border-box;
+            cursor: col-resize;
+            user-select: none;
+        }
+
+        .ruler-track:hover {
+            background: #222;
         }
 
         .ruler-tick {
@@ -231,7 +237,7 @@
 
         .bar-header {
             flex-shrink: 0;
-            border-right: 2px solid var(--border);
+            border-right: 2px solid #666;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -588,7 +594,8 @@
 
         /* Bar separators */
         .grid-cell.bar-start {
-            border-left: 2px solid var(--border);
+            border-left: 2px solid #666;
+            box-shadow: inset 1px 0 0 rgba(255,255,255,0.06);
         }
 
         /* Black key row background */
@@ -619,7 +626,7 @@
             border-left: 3px solid rgba(255, 255, 255, 0.5);
             border-right: 1px solid rgba(0, 0, 0, 0.4);
             z-index: 5;
-            cursor: default;
+            cursor: grab;
             min-width: calc(var(--step-w) - 1px);
             display: flex;
             align-items: center;
@@ -1050,6 +1057,13 @@
         let drawRow = -1;
         let activeNoteEl = null;
         let isResizing = false;
+        let isNoteDragging = false;
+        let noteDragNote = null;
+        let noteDragEl = null;
+        let noteDragStartX = 0;
+        let noteDragStartY = 0;
+        let noteDragOrigStep = 0;
+        let noteDragOrigRow = 0;
         let isChordResizing = false;
         let isChordDragging = false;
         let chordDragRegionId = null;
@@ -1070,6 +1084,9 @@
         let isOverlapping = false;
         const DEFAULT_CHORD_LEN = 16;
         let ghostEl = null;
+
+        // Scrubbing state (click/drag on timeline ruler)
+        let isScrubbing = false;
 
         // Playlist State
         let playlist = []; // Array of composition objects { id, chordRegions, drawnNotes }
@@ -1206,6 +1223,16 @@
             });
         }
 
+        // Seek playhead to a position from a ruler mouse event
+        function seekFromRulerEvent(e) {
+            const scroll = document.getElementById('timelineRulerScroll');
+            const rollEl = document.getElementById('rollWrapper');
+            const rect = scroll.getBoundingClientRect();
+            const x = e.clientX - rect.left + rollEl.scrollLeft;
+            const col = Math.max(0, Math.min(ALL_STEPS - 1, Math.floor(x / STEP_W)));
+            jumpToPosition(col);
+        }
+
         // Build Timeline Ruler
         function buildTimelineRuler() {
             const scroll = document.getElementById('timelineRulerScroll');
@@ -1221,9 +1248,10 @@
                     if (c % STEPS === 0) {
                         // Bar marker
                         tick.textContent = (c / STEPS) + 1;
-                        tick.style.borderLeft = '2px solid var(--border)';
+                        tick.style.borderLeft = '2px solid #666';
                         tick.style.color = '#fff';
                         tick.style.fontWeight = 'bold';
+                        tick.style.textShadow = '0 0 6px rgba(255,255,255,0.3)';
                     } else {
                         // Beat marker
                         tick.textContent = (c / 4) + 1;
@@ -1231,9 +1259,18 @@
                         tick.style.top = '60%';
                         tick.style.fontSize = '0.45rem';
                     }
+                    tick.style.pointerEvents = 'none'; // ticks absorb no clicks
                     scroll.appendChild(tick);
                 }
             }
+
+            // Click / drag-scrub on the ruler to seek
+            scroll.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                e.preventDefault();
+                isScrubbing = true;
+                seekFromRulerEvent(e);
+            });
         }
 
         // Build the main drawable grid
@@ -1497,6 +1534,14 @@
             positionNoteEl(el, note.row, note.startStep, note.lenSteps);
             // Right-click to delete
             el.addEventListener('contextmenu', (e) => { e.preventDefault(); removeNote(note.id); });
+            // Drag to move (body only, not resize handle)
+            el.addEventListener('mousedown', (e) => {
+                if (e.button !== 0) return;
+                if (e.target.classList.contains('resize-handle')) return;
+                e.stopPropagation();
+                e.preventDefault();
+                startNoteDrag(e, note, el);
+            });
             // Add resize handle
             const rh = document.createElement('div');
             rh.className = 'resize-handle';
@@ -1537,6 +1582,20 @@
             chordResizeOrigSteps = r ? r.lenSteps : STEPS;
         }
 
+        // Note drag start
+        function startNoteDrag(e, note, el) {
+            isNoteDragging = true;
+            noteDragNote = note;
+            noteDragEl = el;
+            noteDragStartX = e.clientX;
+            noteDragStartY = e.clientY;
+            noteDragOrigStep = note.startStep;
+            noteDragOrigRow = note.row;
+            el.style.cursor = 'grabbing';
+            el.style.opacity = '0.75';
+            el.style.zIndex = '20';
+        }
+
         // Chord region drag start
         function startChordDrag(e, regionId) {
             e.stopPropagation();
@@ -1549,6 +1608,26 @@
         }
 
         window.addEventListener('mousemove', (ev) => {
+            if (isScrubbing) {
+                seekFromRulerEvent(ev);
+            }
+            if (isNoteDragging && noteDragNote && noteDragEl) {
+                const dx = ev.clientX - noteDragStartX;
+                const dy = ev.clientY - noteDragStartY;
+                const dSteps = Math.round(dx / STEP_W);
+                const dRows = Math.round(dy / NOTE_H);
+                const newStep = Math.max(0, Math.min(ALL_STEPS - noteDragNote.lenSteps, noteDragOrigStep + dSteps));
+                const newRow = Math.max(0, Math.min(NOTE_COUNT - 1, noteDragOrigRow + dRows));
+                noteDragNote.startStep = newStep;
+                noteDragNote.row = newRow;
+                noteDragEl.style.left = `${newStep * STEP_W + 1}px`;
+                noteDragEl.style.top = `${newRow * NOTE_H + 2}px`;
+                // Update label text node without removing resize handle child
+                Array.from(noteDragEl.childNodes).forEach(node => {
+                    if (node.nodeType === Node.TEXT_NODE)
+                        node.textContent = ALL_NOTES[newRow].name.replace(/(\D+)(\d)/, '$1');
+                });
+            }
             if (isResizing && resizeNote) {
                 const dx = ev.clientX - resizeStartX;
                 const newLen = Math.max(1, resizeOrigLen + Math.round(dx / STEP_W));
@@ -1620,6 +1699,23 @@
         });
 
         window.addEventListener('mouseup', (ev) => {
+            if (isScrubbing) {
+                isScrubbing = false;
+            }
+            if (isNoteDragging && noteDragEl) {
+                noteDragEl.style.cursor = 'grab';
+                noteDragEl.style.opacity = '';
+                noteDragEl.style.zIndex = '';
+                // Play the note at its new pitch on drop
+                if (noteDragNote) {
+                    initAudio();
+                    const freq = NOTE_FREQ[ALL_NOTES[noteDragNote.row].name];
+                    if (freq) playNote(freq, audioCtx.currentTime, 0.3);
+                }
+            }
+            isNoteDragging = false;
+            noteDragNote = null;
+            noteDragEl = null;
             if (isDrawing || isResizing) {
                 // Let other listeners handle
             }
@@ -1761,8 +1857,9 @@
 
         // Click handler for grid navigation
         document.getElementById('pianoGrid').addEventListener('click', function (e) {
-            // Ignore clicks when drawing or resizing
+            // Ignore clicks when drawing, resizing, or on a note block
             if (isDrawing || isResizing) return;
+            if (e.target.closest('.note-block')) return;
             const rect = this.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const col = Math.floor(x / STEP_W);
