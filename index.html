@@ -3058,6 +3058,17 @@
             });
 
             e.target.value = '';
+
+            // Scroll piano roll to show the first new note
+            if (drawnNotes.length > 0) {
+                const wrapper = document.getElementById('rollWrapper');
+                const firstNote = drawnNotes.reduce((a, b) => a.startStep <= b.startStep ? a : b);
+                // Vertical: center the note row (row index × NOTE_H, offset by header rows 54+20)
+                const targetY = firstNote.row * NOTE_H - wrapper.clientHeight / 2 + NOTE_H;
+                // Horizontal: scroll to startStep
+                const targetX = firstNote.startStep * STEP_W;
+                wrapper.scrollTo({ top: Math.max(0, targetY), left: Math.max(0, targetX), behavior: 'smooth' });
+            }
         }
 
         document.getElementById('thaiInput').addEventListener('keydown', handleThaiInput);
