@@ -858,19 +858,62 @@
 
     <!-- ─── Main Composer ─── -->
     <main class="main">
-        <!-- ─── Thai Input Card ─── -->
+        <!-- ─── Thai Input + AI Compose Card ─── -->
         <div class="composer-card" style="margin-bottom: 20px; height: auto; min-height: 100px;">
             <div class="card-header">
-                <span class="card-badge">MODULE // THAI WORD CUTTER</span>
-                <span class="card-title">Input Text</span>
+                <span class="card-badge">MODULE // THAI WORD CUTTER + AI COMPOSE</span>
+                <span class="card-title">Lyrics & AI Melody</span>
             </div>
-            <div style="padding: 20px; display: flex; flex-direction: column; gap: 10px;">
-                <input id="thaiInput" type="text" placeholder="Type Thai text and press Enter..."
-                    style="width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'JetBrains Mono'; font-size: 1rem; padding: 10px; border-radius: 4px; box-sizing: border-box;">
-                <label style="display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; user-select: none;">
-                    <input type="checkbox" id="insertAtPlayhead" style="accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer;">
-                    เพิ่มคำจุดที่ timeline indicator อยู่
-                </label>
+            <div style="padding: 20px; display: flex; gap: 24px; flex-wrap: wrap;">
+
+                <!-- LEFT: Lyrics Input -->
+                <div style="flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 10px;">
+                    <div style="font-family:'JetBrains Mono'; font-size:0.7rem; color:var(--text-dim); letter-spacing:1px;">① INPUT LYRICS</div>
+                    <input id="thaiInput" type="text" placeholder="พิมพ์ lyrics แล้วกด Enter..."
+                        style="width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'JetBrains Mono'; font-size: 1rem; padding: 10px; border-radius: 4px; box-sizing: border-box;">
+                    <label style="display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; user-select: none;">
+                        <input type="checkbox" id="insertAtPlayhead" style="accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer;">
+                        เพิ่มคำจุดที่ timeline indicator อยู่
+                    </label>
+                </div>
+
+                <!-- DIVIDER -->
+                <div style="width:1px; background:var(--border); align-self:stretch;"></div>
+
+                <!-- RIGHT: AI Compose Settings -->
+                <div style="flex: 1; min-width: 260px; display: flex; flex-direction: column; gap: 12px;">
+                    <div style="font-family:'JetBrains Mono'; font-size:0.7rem; color:var(--text-dim); letter-spacing:1px;">② AI MELODY COMPOSE</div>
+
+                    <!-- Section -->
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <span style="font-family:'JetBrains Mono'; font-size:0.75rem; color:var(--text-dim); min-width:60px;">SECTION</span>
+                        <button id="sectionVerseBtn" class="tb-btn accent" onclick="setSection('verse')" style="font-size:0.7rem; padding:4px 10px;">VERSE</button>
+                        <button id="sectionHookBtn"  class="tb-btn"        onclick="setSection('hook')"  style="font-size:0.7rem; padding:4px 10px;">HOOK</button>
+                    </div>
+
+                    <!-- Melody Range -->
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <span style="font-family:'JetBrains Mono'; font-size:0.75rem; color:var(--text-dim); min-width:60px;">RANGE</span>
+                        <button id="rangeLowBtn"  class="tb-btn"        onclick="setRange('low')"  style="font-size:0.7rem; padding:4px 10px;">LOW</button>
+                        <button id="rangeMidBtn"  class="tb-btn accent" onclick="setRange('mid')"  style="font-size:0.7rem; padding:4px 10px;">MID</button>
+                        <button id="rangeHighBtn" class="tb-btn"        onclick="setRange('high')" style="font-size:0.7rem; padding:4px 10px;">HIGH</button>
+                    </div>
+
+                    <!-- Compose Button + Status -->
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <button id="composeMelodyBtn" class="tb-btn accent" onclick="aiComposeMelody()"
+                            style="font-size:0.8rem; padding:6px 16px; opacity:0.4; cursor:not-allowed;"
+                            disabled title="วาง Chord และ Lyrics ก่อนสร้าง Melody">
+                            🎹 COMPOSE MELODY
+                        </button>
+                        <button class="tb-btn" onclick="aiUndoCompose()" id="undoComposeBtn"
+                            style="font-size:0.8rem; padding:6px 12px; display:none;">
+                            ↩ UNDO
+                        </button>
+                    </div>
+                    <div id="composeStatus" style="font-family:'JetBrains Mono'; font-size:0.72rem; color:var(--text-dim); min-height:1.2em;"></div>
+                </div>
+
             </div>
         </div>
 
@@ -894,8 +937,8 @@
                     <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="clearSequencer()">CLEAR</button>
                     <div class="tb-sep"></div>
-                    <button class="tb-btn" onclick="exportMelodyMIDI()" title="Export melody notes as MIDI">⬇ MELODY</button>
-                    <button class="tb-btn" onclick="exportChordsMIDI()" title="Export chord regions as MIDI">⬇ CHORDS</button>
+                    <button class="tb-btn" onclick="exportMelodyMIDI()" title="Export melody notes as MIDI">↑ MELODY.MID</button>
+                    <button class="tb-btn" onclick="exportChordsMIDI()" title="Export chord regions as MIDI">↑ CHORDS.MID</button>
                     <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="addToPlaylist()">ADD TO PLAYLIST</button>
                 </div>
@@ -2983,6 +3026,179 @@
         }
 
         document.getElementById('thaiInput').addEventListener('keydown', handleThaiInput);
+
+        // ─── AI COMPOSE STATE ────────────────────────────────────
+
+        let aiSection = 'verse'; // 'verse' | 'hook'
+        let aiRange   = 'mid';   // 'low' | 'mid' | 'high'
+        let aiUndoSnapshot = null;
+
+        function setSection(s) {
+            aiSection = s;
+            document.getElementById('sectionVerseBtn').className = s === 'verse' ? 'tb-btn accent' : 'tb-btn';
+            document.getElementById('sectionHookBtn').className  = s === 'hook'  ? 'tb-btn accent' : 'tb-btn';
+        }
+
+        function setRange(r) {
+            aiRange = r;
+            document.getElementById('rangeLowBtn').className  = r === 'low'  ? 'tb-btn accent' : 'tb-btn';
+            document.getElementById('rangeMidBtn').className  = r === 'mid'  ? 'tb-btn accent' : 'tb-btn';
+            document.getElementById('rangeHighBtn').className = r === 'high' ? 'tb-btn accent' : 'tb-btn';
+        }
+
+        function updateComposeMelodyBtn() {
+            const btn = document.getElementById('composeMelodyBtn');
+            const hasChords  = chordRegions.length > 0;
+            const hasLyrics  = drawnNotes.some(n => n.text);
+            const ready = hasChords && hasLyrics;
+            btn.disabled = !ready;
+            btn.style.opacity  = ready ? '1' : '0.4';
+            btn.style.cursor   = ready ? 'pointer' : 'not-allowed';
+            const status = document.getElementById('composeStatus');
+            if (!hasChords && !hasLyrics) status.textContent = '⚠ วาง Chord และพิมพ์ Lyrics ก่อน';
+            else if (!hasChords)           status.textContent = '⚠ ต้องวาง Chord ก่อน Compose';
+            else if (!hasLyrics)           status.textContent = '⚠ ต้องพิมพ์ Lyrics ก่อน Compose';
+            else                           status.textContent = '✓ พร้อม Compose';
+        }
+
+        // ─── AI COMPOSE LOGIC ────────────────────────────────────
+
+        // Thai tone mark → melodic direction
+        function getThaiToneDirection(word) {
+            if (word.includes('๋')) return 2;   // จัตวา  → ขึ้นสูง
+            if (word.includes('๊')) return 1;   // ตรี    → ขึ้น
+            if (word.includes('้')) return -1;  // โท     → ลง
+            if (word.includes('่')) return -2;  // เอก    → ลงมาก
+            return 0;                            // สามัญ  → คงที่
+        }
+
+        // สระยาว = note ยาว
+        function isLongVowel(word) {
+            const longVowelMarks = ['า','ี','ู','อ','เ','แ','โ','ใ','ไ'];
+            const shortVowelMarks = ['ั','ิ','ึ','็'];
+            const hasShort = shortVowelMarks.some(v => word.includes(v));
+            const hasLong  = longVowelMarks.some(v => word.includes(v));
+            return hasLong && !hasShort;
+        }
+
+        // Get row range based on section + range setting
+        function getRowRange() {
+            // ALL_NOTES: row 0 = C6 (high), row 36 = C3 (low)
+            // Mid = C4(24) to C5(12)
+            const ranges = {
+                low:  { min: 24, max: 36 }, // C3–C4
+                mid:  { min: 12, max: 24 }, // C4–C5
+                high: { min: 0,  max: 12 }, // C5–C6
+            };
+            const base = ranges[aiRange] || ranges.mid;
+            // Hook pushes range up (lower row index = higher pitch)
+            if (aiSection === 'hook') {
+                return { min: Math.max(0, base.min - 6), max: Math.max(6, base.max - 6) };
+            }
+            return base;
+        }
+
+        // Find chord region active at a given step
+        function getChordAtStep(step) {
+            return chordRegions.find(r => step >= r.startStep && step < r.startStep + r.lenSteps) || null;
+        }
+
+        // Get ALL_NOTES row indices of chord tones within a row range
+        function getChordToneRows(chordNotes, minRow, maxRow) {
+            const noteBase = n => n.replace(/\d$/, '');
+            const chordBases = chordNotes.map(noteBase);
+            return ALL_NOTES
+                .map((n, i) => ({ base: noteBase(n.name), i }))
+                .filter(({ base, i }) => chordBases.includes(base) && i >= minRow && i <= maxRow)
+                .map(({ i }) => i);
+        }
+
+        // Pick best row given direction and previous row
+        function pickRow(toneDir, prevRow, chordRows, scaleRows) {
+            const pool = chordRows.length > 0 ? chordRows : scaleRows;
+            if (pool.length === 0) return prevRow;
+
+            // direction: negative = higher pitch (lower row index), positive = lower pitch (higher row index)
+            const sorted = [...pool].sort((a, b) => a - b); // low row = high pitch
+
+            if (toneDir >= 2) return sorted[0];              // highest in pool
+            if (toneDir === 1) {
+                const above = sorted.filter(r => r < prevRow);
+                return above.length ? above[above.length - 1] : sorted[0];
+            }
+            if (toneDir === 0) {
+                // stay close to prevRow
+                return pool.reduce((best, r) => Math.abs(r - prevRow) < Math.abs(best - prevRow) ? r : best, pool[0]);
+            }
+            if (toneDir === -1) {
+                const below = sorted.filter(r => r > prevRow);
+                return below.length ? below[0] : sorted[sorted.length - 1];
+            }
+            return sorted[sorted.length - 1]; // lowest pitch
+        }
+
+        // Main AI compose function
+        function aiComposeMelody() {
+            const lyricNotes = drawnNotes.filter(n => n.text);
+            if (lyricNotes.length === 0) { updateComposeMelodyBtn(); return; }
+            if (chordRegions.length === 0) { updateComposeMelodyBtn(); return; }
+
+            // Save undo snapshot
+            aiUndoSnapshot = drawnNotes.map(n => ({ ...n }));
+            document.getElementById('undoComposeBtn').style.display = 'inline-block';
+
+            const { min: minRow, max: maxRow } = getRowRange();
+
+            // Build a simple diatonic scale for fallback (all notes in range)
+            const scaleRows = ALL_NOTES
+                .map((n, i) => ({ n, i }))
+                .filter(({ i }) => i >= minRow && i <= maxRow)
+                .map(({ i }) => i);
+
+            let prevRow = Math.floor((minRow + maxRow) / 2); // start at mid range
+
+            lyricNotes
+                .sort((a, b) => a.startStep - b.startStep)
+                .forEach(note => {
+                    const chord = getChordAtStep(note.startStep);
+                    const chordNotes = chord ? chord.chordDef.notes : [];
+                    const chordRows = getChordToneRows(chordNotes, minRow, maxRow);
+                    const toneDir  = getThaiToneDirection(note.text);
+                    const newRow   = pickRow(toneDir, prevRow, chordRows, scaleRows);
+
+                    // Update note in drawnNotes
+                    const ref = drawnNotes.find(n => n.id === note.id);
+                    if (ref) {
+                        ref.row = newRow;
+                        // Adjust length: long vowel = 2x if current lenSteps is 1
+                        if (isLongVowel(note.text) && ref.lenSteps === 1) ref.lenSteps = 2;
+                    }
+                    prevRow = newRow;
+                });
+
+            // Re-render all notes
+            document.querySelectorAll('.note-block').forEach(el => el.remove());
+            drawnNotes.forEach(n => renderNote(n));
+
+            const status = document.getElementById('composeStatus');
+            status.textContent = `✓ Compose สำเร็จ — ${lyricNotes.length} notes (${aiSection.toUpperCase()} / ${aiRange.toUpperCase()})`;
+        }
+
+        function aiUndoCompose() {
+            if (!aiUndoSnapshot) return;
+            drawnNotes = aiUndoSnapshot;
+            aiUndoSnapshot = null;
+            document.getElementById('undoComposeBtn').style.display = 'none';
+            document.querySelectorAll('.note-block').forEach(el => el.remove());
+            drawnNotes.forEach(n => renderNote(n));
+            document.getElementById('composeStatus').textContent = '↩ Undo สำเร็จ';
+        }
+
+        // Watch chordRegions + drawnNotes changes to enable/disable button
+        const _origAddChord    = addChordRegion;
+        const _origRemoveChord = removeChordRegion;
+        // Poll-based update (simple, no proxy needed)
+        setInterval(updateComposeMelodyBtn, 600);
 
         init();
 
