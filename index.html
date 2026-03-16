@@ -842,6 +842,9 @@
                     <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="clearSequencer()">CLEAR</button>
                     <div class="tb-sep"></div>
+                    <button class="tb-btn" onclick="exportMelodyMIDI()" title="Export melody notes as MIDI">⬇ MELODY</button>
+                    <button class="tb-btn" onclick="exportChordsMIDI()" title="Export chord regions as MIDI">⬇ CHORDS</button>
+                    <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="addToPlaylist()">ADD TO PLAYLIST</button>
                 </div>
             </div>
@@ -2318,6 +2321,133 @@
 
         function clearSequencer() {
             document.getElementById('confirmModal').style.display = 'flex';
+        }
+
+        // ─── MIDI EXPORT ──────────────────────────────────────────
+
+        function noteNameToMidi(name) {
+            // e.g. "C4" → 60, "A#3" → 46
+            const noteMap = { C:0,'C#':1,'D':2,'D#':3,'E':4,'F':5,'F#':6,'G':7,'G#':8,'A':9,'A#':10,'B':11 };
+            const m = name.match(/^([A-G]#?)(\d)$/);
+            if (!m) return 60;
+            return (parseInt(m[2]) + 1) * 12 + noteMap[m[1]];
+        }
+
+        function buildMidiFile(tracks) {
+            // tracks: array of arrays of { pitch, startTick, durationTick, velocity }
+            const TICKS_PER_BEAT = 480;
+
+            function varLen(n) {
+                if (n < 128) return [n];
+                const bytes = [];
+                bytes.unshift(n & 0x7f);
+                n >>= 7;
+                while (n > 0) { bytes.unshift((n & 0x7f) | 0x80); n >>= 7; }
+                return bytes;
+            }
+
+            function uint32(n) {
+                return [(n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+            }
+
+            function uint16(n) {
+                return [(n >> 8) & 0xff, n & 0xff];
+            }
+
+            // Header chunk
+            const numTracks = tracks.length;
+            const header = [
+                0x4d,0x54,0x68,0x64, // MThd
+                ...uint32(6),         // chunk length
+                ...uint16(numTracks === 1 ? 0 : 1), // format
+                ...uint16(numTracks),
+                ...uint16(TICKS_PER_BEAT)
+            ];
+
+            const trackChunks = tracks.map((events) => {
+                // Build list of {tick, type, pitch, vel}
+                const msgs = [];
+                events.forEach(ev => {
+                    msgs.push({ tick: ev.startTick,                   type: 0x90, pitch: ev.pitch, vel: ev.velocity || 80 });
+                    msgs.push({ tick: ev.startTick + ev.durationTick, type: 0x80, pitch: ev.pitch, vel: 0 });
+                });
+                msgs.sort((a, b) => a.tick - b.tick || a.type - b.type);
+
+                const trackBytes = [];
+                let cursor = 0;
+                msgs.forEach(msg => {
+                    const delta = msg.tick - cursor;
+                    cursor = msg.tick;
+                    trackBytes.push(...varLen(delta), msg.type, msg.pitch, msg.vel);
+                });
+                // End of track
+                trackBytes.push(0x00, 0xff, 0x2f, 0x00);
+
+                return [
+                    0x4d,0x54,0x72,0x6b, // MTrk
+                    ...uint32(trackBytes.length),
+                    ...trackBytes
+                ];
+            });
+
+            const all = [...header, ...trackChunks.flat()];
+            return new Uint8Array(all);
+        }
+
+        function downloadMidi(bytes, filename) {
+            const blob = new Blob([bytes], { type: 'audio/midi' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+        }
+
+        function exportMelodyMIDI() {
+            if (drawnNotes.length === 0) {
+                alert('ไม่มี Melody notes ในขณะนี้');
+                return;
+            }
+            const bpm = parseInt(document.getElementById('bpmInput').value) || 120;
+            const TICKS_PER_BEAT = 480;
+            // 1 step = 1 sixteenth note = TICKS_PER_BEAT / 4
+            const TICKS_PER_STEP = TICKS_PER_BEAT / 4;
+
+            const events = drawnNotes.map(n => ({
+                pitch:        noteNameToMidi(ALL_NOTES[n.row].name),
+                startTick:    n.startStep * TICKS_PER_STEP,
+                durationTick: n.lenSteps  * TICKS_PER_STEP,
+                velocity:     90
+            }));
+
+            const bytes = buildMidiFile([events]);
+            downloadMidi(bytes, 'melody.mid');
+        }
+
+        function exportChordsMIDI() {
+            if (chordRegions.length === 0) {
+                alert('ไม่มี Chord regions ในขณะนี้');
+                return;
+            }
+            const bpm = parseInt(document.getElementById('bpmInput').value) || 120;
+            const TICKS_PER_BEAT = 480;
+            const TICKS_PER_STEP = TICKS_PER_BEAT / 4;
+
+            const events = [];
+            chordRegions.forEach(r => {
+                (r.chordDef.notes || []).forEach(noteName => {
+                    events.push({
+                        pitch:        noteNameToMidi(noteName),
+                        startTick:    r.startStep * TICKS_PER_STEP,
+                        durationTick: r.lenSteps  * TICKS_PER_STEP,
+                        velocity:     75
+                    });
+                });
+            });
+
+            const bytes = buildMidiFile([events]);
+            downloadMidi(bytes, 'chords.mid');
         }
 
         function renderPlaylist() {
