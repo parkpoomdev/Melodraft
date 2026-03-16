@@ -864,9 +864,13 @@
                 <span class="card-badge">MODULE // THAI WORD CUTTER</span>
                 <span class="card-title">Input Text</span>
             </div>
-            <div style="padding: 20px;">
-                <input id="thaiInput" type="text" placeholder="Type Thai text and press Enter..." 
-                    style="width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'JetBrains Mono'; font-size: 1rem; padding: 10px; border-radius: 4px;">
+            <div style="padding: 20px; display: flex; flex-direction: column; gap: 10px;">
+                <input id="thaiInput" type="text" placeholder="Type Thai text and press Enter..."
+                    style="width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'JetBrains Mono'; font-size: 1rem; padding: 10px; border-radius: 4px; box-sizing: border-box;">
+                <label style="display: flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono'; font-size: 0.75rem; color: var(--text-dim); cursor: pointer; user-select: none;">
+                    <input type="checkbox" id="insertAtPlayhead" style="accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer;">
+                    เพิ่มคำจุดที่ timeline indicator อยู่
+                </label>
             </div>
         </div>
 
@@ -2812,17 +2816,31 @@
 
             if (words.length === 0) return;
 
-            performClearSequencer();
+            const c4Index = 24; // C4 is at index 24 in ALL_NOTES
+            const insertAtPlayhead = document.getElementById('insertAtPlayhead').checked;
+
+            // Determine start step
+            let startAt;
+            if (insertAtPlayhead) {
+                startAt = Math.floor(playheadPos / STEP_W);
+            } else {
+                // Start after the last existing note
+                const lastEnd = drawnNotes.reduce((max, n) => Math.max(max, n.startStep + n.lenSteps), 0);
+                startAt = lastEnd;
+            }
+
+            const remaining = ALL_STEPS - startAt;
+            if (remaining <= 0) return; // no room
 
             const wordCount = words.length;
-            const stepsPerWord = Math.floor(ALL_STEPS / wordCount);
-            const c4Index = 24; // C4 is at index 24 in ALL_NOTES
+            const stepsPerWord = Math.max(1, Math.floor(remaining / wordCount));
 
             words.forEach((word, i) => {
-                const startStep = i * stepsPerWord;
+                const step = startAt + i * stepsPerWord;
+                if (step >= ALL_STEPS) return; // out of bounds
                 const note = {
                     row: c4Index,
-                    startStep: startStep,
+                    startStep: step,
                     lenSteps: stepsPerWord,
                     id: Date.now() + i,
                     text: word
@@ -2831,13 +2849,7 @@
                 renderNote(note);
             });
 
-            // Add C chords to each bar
-            const cChord = CHORDS.find(c => c.label === 'C');
-            if (cChord) {
-                for (let b = 0; b < BARS; b++) {
-                    addChordRegion(b * STEPS, JSON.parse(JSON.stringify(cChord)));
-                }
-            }
+            e.target.value = '';
         }
 
         document.getElementById('thaiInput').addEventListener('keydown', handleThaiInput);
