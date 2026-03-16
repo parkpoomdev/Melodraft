@@ -899,20 +899,23 @@
                         </div>
                     </div>
 
-                    <!-- Chord Display + Compose button on same row -->
+                    <!-- Chord Display -->
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                         <span style="font-family:'JetBrains Mono'; font-size:0.68rem; color:var(--text-dim); white-space:nowrap;">CHORDS</span>
-                        <div id="chordDisplay" style="display:flex; gap:3px; flex-wrap:wrap; flex:1;"></div>
+                        <div id="chordDisplay" style="display:flex; gap:3px; flex-wrap:wrap;"></div>
+                    </div>
+
+                    <!-- Compose Button + Status -->
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                         <button id="composeMelodyBtn" class="tb-btn accent" onclick="aiComposeMelody()"
                             style="font-size:0.72rem; padding:4px 12px; opacity:0.4; cursor:not-allowed; white-space:nowrap;"
                             disabled title="วาง Chord และ Lyrics ก่อนสร้าง Melody">
                             🎹 COMPOSE
                         </button>
                         <button class="tb-btn" onclick="aiUndoCompose()" id="undoComposeBtn"
-                            style="font-size:0.72rem; padding:4px 9px; display:none;">↩</button>
+                            style="font-size:0.72rem; padding:4px 9px; display:none;">↩ UNDO</button>
+                        <div id="composeStatus" style="font-family:'JetBrains Mono'; font-size:0.67rem; color:var(--text-dim);"></div>
                     </div>
-
-                    <div id="composeStatus" style="font-family:'JetBrains Mono'; font-size:0.67rem; color:var(--text-dim); min-height:1em;"></div>
                 </div>
 
             </div>
