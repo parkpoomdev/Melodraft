@@ -3061,39 +3061,39 @@
             else                           status.textContent = '✓ พร้อม Compose';
         }
 
-        // ─── AI COMPOSE LOGIC ────────────────────────────────────
+        // ─── AI COMPOSE — LYRIC PROSODY ENGINE ──────────────────
 
-        // Thai tone mark → melodic direction
+        // Thai tone mark → melodic direction (-2 to +2)
+        // NOTE: low row index = high pitch in ALL_NOTES
         function getThaiToneDirection(word) {
-            if (word.includes('๋')) return 2;   // จัตวา  → ขึ้นสูง
-            if (word.includes('๊')) return 1;   // ตรี    → ขึ้น
-            if (word.includes('้')) return -1;  // โท     → ลง
-            if (word.includes('่')) return -2;  // เอก    → ลงมาก
+            if (word.includes('๋')) return -2;  // จัตวา  → ขึ้นสูง (lower row)
+            if (word.includes('๊')) return -1;  // ตรี    → ขึ้น
+            if (word.includes('้')) return 1;   // โท     → ลง
+            if (word.includes('่')) return 2;   // เอก    → ลงมาก
             return 0;                            // สามัญ  → คงที่
         }
 
-        // สระยาว = note ยาว
-        function isLongVowel(word) {
-            const longVowelMarks = ['า','ี','ู','อ','เ','แ','โ','ใ','ไ'];
-            const shortVowelMarks = ['ั','ิ','ึ','็'];
-            const hasShort = shortVowelMarks.some(v => word.includes(v));
-            const hasLong  = longVowelMarks.some(v => word.includes(v));
-            return hasLong && !hasShort;
+        // สระยาว vs สั้น → note duration weight
+        function getSyllableWeight(word) {
+            const shortMarks = ['ั','ิ','ึ','็'];
+            const stopConsonants = ['ก','ด','ต','บ','ป','ข','จ'];
+            const hasShort = shortMarks.some(v => word.includes(v));
+            const hasDead  = stopConsonants.some(c => word[word.length - 1] === c);
+            if (hasShort && hasDead) return 'dead';   // คำตาย → สั้นมาก
+            if (hasShort)            return 'short';
+            return 'long';
         }
 
         // Get row range based on section + range setting
         function getRowRange() {
-            // ALL_NOTES: row 0 = C6 (high), row 36 = C3 (low)
-            // Mid = C4(24) to C5(12)
             const ranges = {
-                low:  { min: 24, max: 36 }, // C3–C4
-                mid:  { min: 12, max: 24 }, // C4–C5
-                high: { min: 0,  max: 12 }, // C5–C6
+                low:  { min: 24, max: 36 },
+                mid:  { min: 12, max: 24 },
+                high: { min: 0,  max: 12 },
             };
             const base = ranges[aiRange] || ranges.mid;
-            // Hook pushes range up (lower row index = higher pitch)
             if (aiSection === 'hook') {
-                return { min: Math.max(0, base.min - 6), max: Math.max(6, base.max - 6) };
+                return { min: Math.max(0, base.min - 4), max: Math.max(4, base.max - 4) };
             }
             return base;
         }
@@ -3103,85 +3103,154 @@
             return chordRegions.find(r => step >= r.startStep && step < r.startStep + r.lenSteps) || null;
         }
 
-        // Get ALL_NOTES row indices of chord tones within a row range
+        // Get ALL_NOTES row indices for chord tones within range
         function getChordToneRows(chordNotes, minRow, maxRow) {
-            const noteBase = n => n.replace(/\d$/, '');
-            const chordBases = chordNotes.map(noteBase);
+            const base = n => n.replace(/\d+$/, '');
+            const chordBases = chordNotes.map(base);
             return ALL_NOTES
-                .map((n, i) => ({ base: noteBase(n.name), i }))
-                .filter(({ base, i }) => chordBases.includes(base) && i >= minRow && i <= maxRow)
+                .map((n, i) => ({ b: base(n.name), i }))
+                .filter(({ b, i }) => chordBases.includes(b) && i >= minRow && i <= maxRow)
                 .map(({ i }) => i);
         }
 
-        // Pick best row given direction and previous row
-        function pickRow(toneDir, prevRow, chordRows, scaleRows) {
+        // Melodic contour target row at position pos (0–1) in phrase
+        function getContourRow(shape, pos, minRow, maxRow) {
+            const span = maxRow - minRow;
+            const mid  = minRow + span / 2;
+            switch (shape) {
+                case 'arch':      return Math.round(minRow + span * (1 - Math.pow(2 * pos - 1, 2)));
+                case 'valley':    return Math.round(minRow + span * Math.pow(2 * pos - 1, 2));
+                case 'ascending': return Math.round(maxRow - span * pos);      // low row = high pitch
+                case 'descending':return Math.round(minRow + span * pos);
+                case 'wave':      return Math.round(mid + (span / 3) * Math.sin(pos * Math.PI * 3));
+                case 'stepUp':    return Math.round(maxRow - span * Math.pow(pos, 0.5));
+                case 'stepDown':  return Math.round(minRow + span * Math.pow(pos, 0.5));
+                default:          return Math.round(mid);
+            }
+        }
+
+        // Score-based stochastic pitch selection
+        function pickRowProsody(toneDir, prevRow, contourRow, chordRows, scaleRows) {
             const pool = chordRows.length > 0 ? chordRows : scaleRows;
             if (pool.length === 0) return prevRow;
 
-            // direction: negative = higher pitch (lower row index), positive = lower pitch (higher row index)
-            const sorted = [...pool].sort((a, b) => a - b); // low row = high pitch
+            const scored = pool.map(r => {
+                let score = 0;
+                // Chord tone bonus
+                if (chordRows.includes(r)) score += 4;
+                // Contour affinity
+                score -= Math.abs(r - contourRow) * 0.6;
+                // Thai tone direction (low row index = higher pitch)
+                score += toneDir * (r - prevRow) * 0.5;
+                // Smooth voice leading: penalize large leaps
+                score -= Math.abs(r - prevRow) * 0.4;
+                // Avoid repeating exact same note
+                if (r === prevRow) score -= 2;
+                // Randomness for variation each run
+                score += (Math.random() - 0.5) * 3.5;
+                return { r, score };
+            });
 
-            if (toneDir >= 2) return sorted[0];              // highest in pool
-            if (toneDir === 1) {
-                const above = sorted.filter(r => r < prevRow);
-                return above.length ? above[above.length - 1] : sorted[0];
-            }
-            if (toneDir === 0) {
-                // stay close to prevRow
-                return pool.reduce((best, r) => Math.abs(r - prevRow) < Math.abs(best - prevRow) ? r : best, pool[0]);
-            }
-            if (toneDir === -1) {
-                const below = sorted.filter(r => r > prevRow);
-                return below.length ? below[0] : sorted[sorted.length - 1];
-            }
-            return sorted[sorted.length - 1]; // lowest pitch
+            scored.sort((a, b) => b.score - a.score);
+            // Weighted stochastic pick: 60% best, 25% 2nd, 15% 3rd+
+            const rand = Math.random();
+            if (rand < 0.60 || scored.length === 1) return scored[0].r;
+            if (rand < 0.85 || scored.length === 2) return scored[1].r;
+            return scored[Math.min(2, scored.length - 1)].r;
         }
 
-        // Main AI compose function
-        function aiComposeMelody() {
-            const lyricNotes = drawnNotes.filter(n => n.text);
-            if (lyricNotes.length === 0) { updateComposeMelodyBtn(); return; }
-            if (chordRegions.length === 0) { updateComposeMelodyBtn(); return; }
+        // Randomize note duration based on Thai prosody
+        function randomizeDuration(syllableWeight, currentLen) {
+            const r = Math.random();
+            switch (syllableWeight) {
+                case 'dead':  return 1;                              // คำตาย = สั้นเสมอ
+                case 'short': return r < 0.75 ? 1 : 2;              // mostly short
+                case 'long':  return r < 0.15 ? 1 : r < 0.65 ? 2 : 3; // mostly long, sometimes very long
+                default:      return currentLen;
+            }
+        }
 
-            // Save undo snapshot
+        // Build rhythm stress pattern for a phrase (strong/weak beats)
+        function buildStressPattern(count) {
+            const patterns = [
+                [1,0,0,0, 1,0,0,0],   // straight 4/4
+                [1,0,1,0, 1,0,1,0],   // on-beat
+                [1,0,0,1, 0,1,0,0],   // syncopated
+                [1,1,0,0, 1,1,0,0],   // double
+                [1,0,0,0, 0,1,0,0],   // sparse
+            ];
+            const pat = patterns[Math.floor(Math.random() * patterns.length)];
+            return Array.from({ length: count }, (_, i) => pat[i % pat.length]);
+        }
+
+        // Main AI compose — Lyric Prosody Engine
+        function aiComposeMelody() {
+            const lyricNotes = drawnNotes.filter(n => n.text).sort((a, b) => a.startStep - b.startStep);
+            if (lyricNotes.length === 0 || chordRegions.length === 0) { updateComposeMelodyBtn(); return; }
+
+            // Save undo
             aiUndoSnapshot = drawnNotes.map(n => ({ ...n }));
             document.getElementById('undoComposeBtn').style.display = 'inline-block';
 
             const { min: minRow, max: maxRow } = getRowRange();
+            const scaleRows = ALL_NOTES.map((_, i) => i).filter(i => i >= minRow && i <= maxRow);
 
-            // Build a simple diatonic scale for fallback (all notes in range)
-            const scaleRows = ALL_NOTES
-                .map((n, i) => ({ n, i }))
-                .filter(({ i }) => i >= minRow && i <= maxRow)
-                .map(({ i }) => i);
+            // ── Per-run randomization seeds ──────────────────────
+            const contourShapes = ['arch', 'valley', 'ascending', 'descending', 'wave', 'stepUp', 'stepDown'];
+            const contour = contourShapes[Math.floor(Math.random() * contourShapes.length)];
 
-            let prevRow = Math.floor((minRow + maxRow) / 2); // start at mid range
+            // Random starting pitch (avoid always landing on same note)
+            const spread = Math.floor((maxRow - minRow) * 0.4);
+            const startBias = Math.floor((Math.random() - 0.5) * spread * 2);
+            let prevRow = Math.max(minRow, Math.min(maxRow, Math.floor((minRow + maxRow) / 2) + startBias));
 
-            lyricNotes
-                .sort((a, b) => a.startStep - b.startStep)
-                .forEach(note => {
-                    const chord = getChordAtStep(note.startStep);
-                    const chordNotes = chord ? chord.chordDef.notes : [];
-                    const chordRows = getChordToneRows(chordNotes, minRow, maxRow);
-                    const toneDir  = getThaiToneDirection(note.text);
-                    const newRow   = pickRow(toneDir, prevRow, chordRows, scaleRows);
+            // Stress pattern for rhythmic variation
+            const stress = buildStressPattern(lyricNotes.length);
 
-                    // Update note in drawnNotes
-                    const ref = drawnNotes.find(n => n.id === note.id);
-                    if (ref) {
-                        ref.row = newRow;
-                        // Adjust length: long vowel = 2x if current lenSteps is 1
-                        if (isLongVowel(note.text) && ref.lenSteps === 1) ref.lenSteps = 2;
-                    }
-                    prevRow = newRow;
-                });
+            const total = lyricNotes.length;
 
-            // Re-render all notes
+            lyricNotes.forEach((note, idx) => {
+                const ref = drawnNotes.find(n => n.id === note.id);
+                if (!ref) return;
+
+                // Phrase position (0–1)
+                const pos = total > 1 ? idx / (total - 1) : 0.5;
+
+                // Contour target for this position
+                const contourRow = getContourRow(contour, pos, minRow, maxRow);
+
+                // Chord tones at this step
+                const chord = getChordAtStep(ref.startStep);
+                const chordNotes = chord ? chord.chordDef.notes : [];
+                const chordRows = getChordToneRows(chordNotes, minRow, maxRow);
+
+                // Thai prosody
+                const toneDir  = getThaiToneDirection(ref.text);
+                const sylW     = getSyllableWeight(ref.text);
+
+                // Stress: if weak beat, bias toward passing tones
+                const effectiveChordRows = stress[idx] ? chordRows : scaleRows;
+
+                // Pick pitch
+                const newRow = pickRowProsody(toneDir, prevRow, contourRow, effectiveChordRows, scaleRows);
+                ref.row = newRow;
+                prevRow = newRow;
+
+                // Rhythmic duration from prosody
+                ref.lenSteps = randomizeDuration(sylW, ref.lenSteps);
+
+                // Occasional micro-rest: shorten note slightly on weak beats
+                if (!stress[idx] && ref.lenSteps > 1 && Math.random() > 0.65) {
+                    ref.lenSteps = Math.max(1, ref.lenSteps - 1);
+                }
+            });
+
+            // Re-render
             document.querySelectorAll('.note-block').forEach(el => el.remove());
             drawnNotes.forEach(n => renderNote(n));
 
             const status = document.getElementById('composeStatus');
-            status.textContent = `✓ Compose สำเร็จ — ${lyricNotes.length} notes (${aiSection.toUpperCase()} / ${aiRange.toUpperCase()})`;
+            status.textContent = `✓ [${contour.toUpperCase()}] ${aiSection} / ${aiRange} — ${lyricNotes.length} syllables composed`;
         }
 
         function aiUndoCompose() {
