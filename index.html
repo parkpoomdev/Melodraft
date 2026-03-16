@@ -3113,6 +3113,25 @@
                 .map(({ i }) => i);
         }
 
+        // Pitch-class lookup (C=0 … B=11)
+        const PC = { C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11,Cb:11 };
+        const MAJOR_SCALE = [0,2,4,5,7,9,11];
+        const MINOR_SCALE = [0,2,3,5,7,8,10];
+
+        // Derive diatonic scale rows from a chord's label (e.g. "Am", "F", "C#m")
+        function getDiatonicRows(chordDef, minRow, maxRow) {
+            const m = (chordDef.label || '').match(/^([A-G][b#]?)(m|min)?/i);
+            if (!m) return [];
+            const rootPC   = PC[m[1]] ?? 0;
+            const isMinor  = !!(m[2]);
+            const steps    = isMinor ? MINOR_SCALE : MAJOR_SCALE;
+            const diatonic = new Set(steps.map(s => (rootPC + s) % 12));
+            return ALL_NOTES
+                .map((n, i) => ({ pc: PC[n.name.replace(/\d+$/, '')] ?? -1, i }))
+                .filter(({ pc, i }) => diatonic.has(pc) && i >= minRow && i <= maxRow)
+                .map(({ i }) => i);
+        }
+
         // Melodic contour target row at position pos (0–1) in phrase
         function getContourRow(shape, pos, minRow, maxRow) {
             const span = maxRow - minRow;
@@ -3130,29 +3149,29 @@
         }
 
         // Score-based stochastic pitch selection
-        function pickRowProsody(toneDir, prevRow, contourRow, chordRows, scaleRows) {
-            const pool = chordRows.length > 0 ? chordRows : scaleRows;
+        // chordRows   = chord tones (strongest preference)
+        // diatonicRows = diatonic scale of chord (safe passing tones)
+        // fallbackRows = chromatic range (last resort, rarely used)
+        function pickRowProsody(toneDir, prevRow, contourRow, chordRows, diatonicRows, fallbackRows) {
+            // Pool: chord tones on strong beats, diatonic on weak — caller decides
+            const pool = chordRows.length > 0 ? chordRows
+                       : diatonicRows.length > 0 ? diatonicRows
+                       : fallbackRows;
             if (pool.length === 0) return prevRow;
 
             const scored = pool.map(r => {
                 let score = 0;
-                // Chord tone bonus
-                if (chordRows.includes(r)) score += 4;
-                // Contour affinity
-                score -= Math.abs(r - contourRow) * 0.6;
-                // Thai tone direction (low row index = higher pitch)
-                score += toneDir * (r - prevRow) * 0.5;
-                // Smooth voice leading: penalize large leaps
-                score -= Math.abs(r - prevRow) * 0.4;
-                // Avoid repeating exact same note
-                if (r === prevRow) score -= 2;
-                // Randomness for variation each run
-                score += (Math.random() - 0.5) * 3.5;
+                if (chordRows.includes(r))   score += 5;   // chord tone — strong pull
+                if (diatonicRows.includes(r)) score += 2;  // in-key bonus
+                score -= Math.abs(r - contourRow) * 0.6;   // follow contour shape
+                score += toneDir * (r - prevRow) * 0.5;    // Thai tone direction
+                score -= Math.abs(r - prevRow) * 0.4;      // smooth voice leading
+                if (r === prevRow) score -= 2;              // avoid monotone repeat
+                score += (Math.random() - 0.5) * 3.0;      // variation each run
                 return { r, score };
             });
 
             scored.sort((a, b) => b.score - a.score);
-            // Weighted stochastic pick: 60% best, 25% 2nd, 15% 3rd+
             const rand = Math.random();
             if (rand < 0.60 || scored.length === 1) return scored[0].r;
             if (rand < 0.85 || scored.length === 2) return scored[1].r;
@@ -3232,8 +3251,9 @@
 
             // ── PLACE + PITCH per chord region ───────────────────────
             chordNoteMap.forEach(({ chord, indices }) => {
-                const stepsPerNote  = Math.max(2, Math.floor(chord.lenSteps / indices.length));
-                const chordToneRows = getChordToneRows(chord.chordDef.notes, minRow, maxRow);
+                const stepsPerNote   = Math.max(2, Math.floor(chord.lenSteps / indices.length));
+                const chordToneRows  = getChordToneRows(chord.chordDef.notes, minRow, maxRow);
+                const diatonicRows   = getDiatonicRows(chord.chordDef, minRow, maxRow);
 
                 indices.forEach((globalIdx, localIdx) => {
                     const ref = drawnNotes.find(n => n.id === lyricNotes[globalIdx].id);
@@ -3243,10 +3263,10 @@
                     ref.startStep = Math.min(ALL_STEPS - 1, chord.startStep + localIdx * stepsPerNote);
 
                     // Duration: fraction of allocated space (prosody-driven)
-                    const sylW    = getSyllableWeight(ref.text);
-                    ref.lenSteps  = calcDuration(sylW, stepsPerNote);
+                    const sylW   = getSyllableWeight(ref.text);
+                    ref.lenSteps = calcDuration(sylW, stepsPerNote);
 
-                    // Micro-rest on weak beats: clip duration a bit
+                    // Micro-rest on weak beats
                     if (!stress[globalIdx] && ref.lenSteps > 1 && Math.random() > 0.7) {
                         ref.lenSteps = Math.max(1, ref.lenSteps - 1);
                     }
@@ -3256,9 +3276,10 @@
                     const contourRow = getContourRow(contour, pos, minRow, maxRow);
                     const toneDir    = getThaiToneDirection(ref.text);
 
-                    // Strong beats → chord tones; weak beats → scale passing tones
-                    const pool = (stress[globalIdx] && chordToneRows.length > 0) ? chordToneRows : scaleRows;
-                    ref.row  = pickRowProsody(toneDir, prevRow, contourRow, pool, scaleRows);
+                    // Strong beats → chord tones only
+                    // Weak beats   → diatonic passing tones (in-key, not chromatic)
+                    const beatPool = stress[globalIdx] ? chordToneRows : diatonicRows;
+                    ref.row  = pickRowProsody(toneDir, prevRow, contourRow, beatPool, diatonicRows, scaleRows);
                     prevRow  = ref.row;
                 });
             });
