@@ -3194,10 +3194,7 @@
             document.getElementById('composeStatus').textContent = '↩ Undo สำเร็จ';
         }
 
-        // Watch chordRegions + drawnNotes changes to enable/disable button
-        const _origAddChord    = addChordRegion;
-        const _origRemoveChord = removeChordRegion;
-        // Poll-based update (simple, no proxy needed)
+        // Poll to keep Compose button state updated
         setInterval(updateComposeMelodyBtn, 600);
 
         init();
