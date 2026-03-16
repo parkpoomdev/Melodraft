@@ -945,6 +945,7 @@
                     <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="exportMelodyMIDI()" title="Export melody notes as MIDI">↑ MELODY.MID</button>
                     <button class="tb-btn" onclick="exportChordsMIDI()" title="Export chord regions as MIDI">↑ CHORDS.MID</button>
+                    <button class="tb-btn accent" onclick="exportFullMIDI()" title="Export melody + chords as multi-track MIDI">↑ FULL.MID</button>
                     <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="addToPlaylist()">ADD TO PLAYLIST</button>
                 </div>
@@ -2619,65 +2620,76 @@
             return (parseInt(m[2]) + 1) * 12 + noteMap[m[1]];
         }
 
-        function buildMidiFile(tracks) {
-            // tracks: array of arrays of { pitch, startTick, durationTick, velocity }
-            const TICKS_PER_BEAT = 480;
+        // buildMidiFile(tracks, bpm)
+        // tracks: array of { name, events, channel } or plain event arrays (backward-compat)
+        // events: [{ pitch, startTick, durationTick, velocity }]
+        function buildMidiFile(tracks, bpm) {
+            const TICKS_PER_BEAT  = 480;
+            const usPerBeat       = Math.round(60000000 / (bpm || 120));
+            const numTracks       = tracks.length;
 
             function varLen(n) {
                 if (n < 128) return [n];
-                const bytes = [];
-                bytes.unshift(n & 0x7f);
-                n >>= 7;
-                while (n > 0) { bytes.unshift((n & 0x7f) | 0x80); n >>= 7; }
-                return bytes;
+                const out = [];
+                out.unshift(n & 0x7f); n >>= 7;
+                while (n > 0) { out.unshift((n & 0x7f) | 0x80); n >>= 7; }
+                return out;
             }
+            const u32 = n => [(n>>24)&0xff,(n>>16)&0xff,(n>>8)&0xff,n&0xff];
+            const u16 = n => [(n>>8)&0xff, n&0xff];
 
-            function uint32(n) {
-                return [(n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
-            }
+            // Normalise: accept plain array or {name,events,channel} object
+            const normTracks = tracks.map((t, i) =>
+                Array.isArray(t) ? { name: '', events: t, channel: i } : t
+            );
 
-            function uint16(n) {
-                return [(n >> 8) & 0xff, n & 0xff];
-            }
-
-            // Header chunk
-            const numTracks = tracks.length;
             const header = [
-                0x4d,0x54,0x68,0x64, // MThd
-                ...uint32(6),         // chunk length
-                ...uint16(numTracks === 1 ? 0 : 1), // format
-                ...uint16(numTracks),
-                ...uint16(TICKS_PER_BEAT)
+                0x4d,0x54,0x68,0x64,          // MThd
+                ...u32(6),
+                ...u16(numTracks === 1 ? 0 : 1), // format 0 or 1
+                ...u16(numTracks),
+                ...u16(TICKS_PER_BEAT)
             ];
 
-            const trackChunks = tracks.map((events) => {
-                // Build list of {tick, type, pitch, vel}
+            const trackChunks = normTracks.map(({ name, events, channel }, ti) => {
+                const ch  = (channel || 0) & 0x0f;
                 const msgs = [];
+
                 events.forEach(ev => {
-                    msgs.push({ tick: ev.startTick,                   type: 0x90, pitch: ev.pitch, vel: ev.velocity || 80 });
-                    msgs.push({ tick: ev.startTick + ev.durationTick, type: 0x80, pitch: ev.pitch, vel: 0 });
+                    msgs.push({ tick: ev.startTick,                    type: 0x90 | ch, pitch: ev.pitch, vel: ev.velocity || 80 });
+                    msgs.push({ tick: ev.startTick + ev.durationTick,  type: 0x80 | ch, pitch: ev.pitch, vel: 0 });
                 });
                 msgs.sort((a, b) => a.tick - b.tick || a.type - b.type);
 
-                const trackBytes = [];
+                const tb = [];
+
+                // Track name meta (FF 03)
+                if (name) {
+                    const nb = [...name].map(c => c.charCodeAt(0));
+                    tb.push(0x00, 0xFF, 0x03, ...varLen(nb.length), ...nb);
+                }
+
+                // Tempo meta in first track (FF 51 03)
+                if (ti === 0) {
+                    tb.push(0x00, 0xFF, 0x51, 0x03,
+                        (usPerBeat >> 16) & 0xff,
+                        (usPerBeat >>  8) & 0xff,
+                         usPerBeat        & 0xff);
+                }
+
                 let cursor = 0;
                 msgs.forEach(msg => {
                     const delta = msg.tick - cursor;
                     cursor = msg.tick;
-                    trackBytes.push(...varLen(delta), msg.type, msg.pitch, msg.vel);
+                    tb.push(...varLen(delta), msg.type, msg.pitch, msg.vel);
                 });
-                // End of track
-                trackBytes.push(0x00, 0xff, 0x2f, 0x00);
 
-                return [
-                    0x4d,0x54,0x72,0x6b, // MTrk
-                    ...uint32(trackBytes.length),
-                    ...trackBytes
-                ];
+                tb.push(0x00, 0xFF, 0x2F, 0x00); // End of track
+
+                return [0x4d,0x54,0x72,0x6b, ...u32(tb.length), ...tb]; // MTrk
             });
 
-            const all = [...header, ...trackChunks.flat()];
-            return new Uint8Array(all);
+            return new Uint8Array([...header, ...trackChunks.flat()]);
         }
 
         function downloadMidi(bytes, filename) {
@@ -2691,49 +2703,67 @@
         }
 
         function exportMelodyMIDI() {
-            if (drawnNotes.length === 0) {
-                alert('ไม่มี Melody notes ในขณะนี้');
-                return;
-            }
+            if (drawnNotes.length === 0) { alert('ไม่มี Melody notes ในขณะนี้'); return; }
             const bpm = parseInt(document.getElementById('bpmInput').value) || 120;
-            const TICKS_PER_BEAT = 480;
-            // 1 step = 1 sixteenth note = TICKS_PER_BEAT / 4
-            const TICKS_PER_STEP = TICKS_PER_BEAT / 4;
-
+            const TPS = 480 / 4; // ticks per step
             const events = drawnNotes.map(n => ({
                 pitch:        noteNameToMidi(ALL_NOTES[n.row].name),
-                startTick:    n.startStep * TICKS_PER_STEP,
-                durationTick: n.lenSteps  * TICKS_PER_STEP,
+                startTick:    n.startStep * TPS,
+                durationTick: n.lenSteps  * TPS,
                 velocity:     90
             }));
-
-            const bytes = buildMidiFile([events]);
-            downloadMidi(bytes, 'melody.mid');
+            downloadMidi(buildMidiFile([{ name: 'Melody', events, channel: 0 }], bpm), 'melody.mid');
         }
 
         function exportChordsMIDI() {
-            if (chordRegions.length === 0) {
-                alert('ไม่มี Chord regions ในขณะนี้');
-                return;
-            }
+            if (chordRegions.length === 0) { alert('ไม่มี Chord regions ในขณะนี้'); return; }
             const bpm = parseInt(document.getElementById('bpmInput').value) || 120;
-            const TICKS_PER_BEAT = 480;
-            const TICKS_PER_STEP = TICKS_PER_BEAT / 4;
-
+            const TPS = 480 / 4;
             const events = [];
             chordRegions.forEach(r => {
                 (r.chordDef.notes || []).forEach(noteName => {
                     events.push({
                         pitch:        noteNameToMidi(noteName),
-                        startTick:    r.startStep * TICKS_PER_STEP,
-                        durationTick: r.lenSteps  * TICKS_PER_STEP,
+                        startTick:    r.startStep * TPS,
+                        durationTick: r.lenSteps  * TPS,
                         velocity:     75
                     });
                 });
             });
+            downloadMidi(buildMidiFile([{ name: 'Chords', events, channel: 1 }], bpm), 'chords.mid');
+        }
 
-            const bytes = buildMidiFile([events]);
-            downloadMidi(bytes, 'chords.mid');
+        function exportFullMIDI() {
+            if (drawnNotes.length === 0 && chordRegions.length === 0) {
+                alert('ไม่มี Melody หรือ Chord ในขณะนี้'); return;
+            }
+            const bpm = parseInt(document.getElementById('bpmInput').value) || 120;
+            const TPS = 480 / 4;
+
+            const melodyEvents = drawnNotes.map(n => ({
+                pitch:        noteNameToMidi(ALL_NOTES[n.row].name),
+                startTick:    n.startStep * TPS,
+                durationTick: n.lenSteps  * TPS,
+                velocity:     90
+            }));
+
+            const chordEvents = [];
+            chordRegions.forEach(r => {
+                (r.chordDef.notes || []).forEach(noteName => {
+                    chordEvents.push({
+                        pitch:        noteNameToMidi(noteName),
+                        startTick:    r.startStep * TPS,
+                        durationTick: r.lenSteps  * TPS,
+                        velocity:     70
+                    });
+                });
+            });
+
+            const tracks = [
+                { name: 'Melody', events: melodyEvents, channel: 0 },
+                { name: 'Chords', events: chordEvents,  channel: 1 }
+            ];
+            downloadMidi(buildMidiFile(tracks, bpm), 'melodraft_full.mid');
         }
 
         function renderPlaylist() {
