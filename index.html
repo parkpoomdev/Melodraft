@@ -899,6 +899,12 @@
                         <button id="rangeHighBtn" class="tb-btn"        onclick="setRange('high')" style="font-size:0.7rem; padding:4px 10px;">HIGH</button>
                     </div>
 
+                    <!-- Chord Progression Display -->
+                    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; min-height:24px;">
+                        <span style="font-family:'JetBrains Mono'; font-size:0.75rem; color:var(--text-dim); min-width:60px;">CHORDS</span>
+                        <div id="chordDisplay" style="display:flex; gap:4px; flex-wrap:wrap;"></div>
+                    </div>
+
                     <!-- Compose Button + Status -->
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                         <button id="composeMelodyBtn" class="tb-btn accent" onclick="aiComposeMelody()"
@@ -3054,6 +3060,29 @@
             btn.disabled = !ready;
             btn.style.opacity  = ready ? '1' : '0.4';
             btn.style.cursor   = ready ? 'pointer' : 'not-allowed';
+
+            // Update chord progression display
+            const display = document.getElementById('chordDisplay');
+            if (display) {
+                display.innerHTML = '';
+                if (chordRegions.length === 0) {
+                    display.innerHTML = '<span style="font-family:\'JetBrains Mono\'; font-size:0.7rem; color:var(--text-dim); opacity:0.5;">— ยังไม่มี Chord —</span>';
+                } else {
+                    [...chordRegions]
+                        .sort((a, b) => a.startStep - b.startStep)
+                        .forEach(r => {
+                            const chip = document.createElement('span');
+                            chip.textContent = r.chordDef.label;
+                            chip.style.cssText = `
+                                font-family:'JetBrains Mono'; font-size:0.72rem;
+                                background:var(--accent-dim); color:var(--accent);
+                                border:1px solid var(--accent); border-radius:3px;
+                                padding:2px 7px; white-space:nowrap;`;
+                            display.appendChild(chip);
+                        });
+                }
+            }
+
             const status = document.getElementById('composeStatus');
             if (!hasChords && !hasLyrics) status.textContent = '⚠ วาง Chord และพิมพ์ Lyrics ก่อน';
             else if (!hasChords)           status.textContent = '⚠ ต้องวาง Chord ก่อน Compose';
