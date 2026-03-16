@@ -917,7 +917,7 @@
             </div>
         </div>
 
-        <div class="composer-card">
+        <div class="composer-card" id="pianoRollCard">
 
             <div class="card-header">
                 <span class="card-badge">MODULE // COMPOSITION</span>
@@ -1209,7 +1209,7 @@
         // ─── INIT ────────────────────────────────────────────
         function init() {
             // Resize card/grid to fit 4 bars into horizontal layout
-            const card = document.querySelector('.composer-card');
+            const card = document.getElementById('pianoRollCard');
             if (card) {
                 const avail = card.clientWidth - LABEL_W - 24; // safety padding for scrollbars
                 STEP_W = Math.max(16, Math.floor(avail / ALL_STEPS));
