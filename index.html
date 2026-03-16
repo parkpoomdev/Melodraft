@@ -3159,15 +3159,16 @@
             return scored[Math.min(2, scored.length - 1)].r;
         }
 
-        // Randomize note duration based on Thai prosody
-        function randomizeDuration(syllableWeight, currentLen) {
-            const r = Math.random();
+        // Duration as a fraction of the allocated step space per note
+        function calcDuration(syllableWeight, allocatedSteps) {
+            let factor;
             switch (syllableWeight) {
-                case 'dead':  return 1;                              // คำตาย = สั้นเสมอ
-                case 'short': return r < 0.75 ? 1 : 2;              // mostly short
-                case 'long':  return r < 0.15 ? 1 : r < 0.65 ? 2 : 3; // mostly long, sometimes very long
-                default:      return currentLen;
+                case 'dead':  factor = 0.35 + Math.random() * 0.15; break; // 0.35–0.50 staccato
+                case 'short': factor = 0.50 + Math.random() * 0.22; break; // 0.50–0.72
+                case 'long':  factor = 0.75 + Math.random() * 0.22; break; // 0.75–0.97 legato
+                default:      factor = 0.60 + Math.random() * 0.20; break;
             }
+            return Math.max(1, Math.round(allocatedSteps * factor));
         }
 
         // Build rhythm stress pattern for a phrase (strong/weak beats)
@@ -3183,7 +3184,7 @@
             return Array.from({ length: count }, (_, i) => pat[i % pat.length]);
         }
 
-        // Main AI compose — Lyric Prosody Engine
+        // Main AI compose — Lyric Prosody Engine v2 (chord-aware redistribution)
         function aiComposeMelody() {
             const lyricNotes = drawnNotes.filter(n => n.text).sort((a, b) => a.startStep - b.startStep);
             if (lyricNotes.length === 0 || chordRegions.length === 0) { updateComposeMelodyBtn(); return; }
@@ -3195,54 +3196,71 @@
             const { min: minRow, max: maxRow } = getRowRange();
             const scaleRows = ALL_NOTES.map((_, i) => i).filter(i => i >= minRow && i <= maxRow);
 
-            // ── Per-run randomization seeds ──────────────────────
+            // ── Per-run randomization seeds ───────────────────────────
             const contourShapes = ['arch', 'valley', 'ascending', 'descending', 'wave', 'stepUp', 'stepDown'];
             const contour = contourShapes[Math.floor(Math.random() * contourShapes.length)];
 
-            // Random starting pitch (avoid always landing on same note)
             const spread = Math.floor((maxRow - minRow) * 0.4);
-            const startBias = Math.floor((Math.random() - 0.5) * spread * 2);
-            let prevRow = Math.max(minRow, Math.min(maxRow, Math.floor((minRow + maxRow) / 2) + startBias));
+            let prevRow = Math.max(minRow, Math.min(maxRow,
+                Math.floor((minRow + maxRow) / 2) + Math.floor((Math.random() - 0.5) * spread * 2)));
 
-            // Stress pattern for rhythmic variation
             const stress = buildStressPattern(lyricNotes.length);
+            const total  = lyricNotes.length;
 
-            const total = lyricNotes.length;
+            // ── CHORD-AWARE REDISTRIBUTION ────────────────────────────
+            // Sort chords by position; map each lyric note proportionally into a chord region
+            const sortedChords     = [...chordRegions].sort((a, b) => a.startStep - b.startStep);
+            const totalChordSteps  = sortedChords.reduce((s, r) => s + r.lenSteps, 0);
 
-            lyricNotes.forEach((note, idx) => {
-                const ref = drawnNotes.find(n => n.id === note.id);
-                if (!ref) return;
-
-                // Phrase position (0–1)
-                const pos = total > 1 ? idx / (total - 1) : 0.5;
-
-                // Contour target for this position
-                const contourRow = getContourRow(contour, pos, minRow, maxRow);
-
-                // Chord tones at this step
-                const chord = getChordAtStep(ref.startStep);
-                const chordNotes = chord ? chord.chordDef.notes : [];
-                const chordRows = getChordToneRows(chordNotes, minRow, maxRow);
-
-                // Thai prosody
-                const toneDir  = getThaiToneDirection(ref.text);
-                const sylW     = getSyllableWeight(ref.text);
-
-                // Stress: if weak beat, bias toward passing tones
-                const effectiveChordRows = stress[idx] ? chordRows : scaleRows;
-
-                // Pick pitch
-                const newRow = pickRowProsody(toneDir, prevRow, contourRow, effectiveChordRows, scaleRows);
-                ref.row = newRow;
-                prevRow = newRow;
-
-                // Rhythmic duration from prosody
-                ref.lenSteps = randomizeDuration(sylW, ref.lenSteps);
-
-                // Occasional micro-rest: shorten note slightly on weak beats
-                if (!stress[idx] && ref.lenSteps > 1 && Math.random() > 0.65) {
-                    ref.lenSteps = Math.max(1, ref.lenSteps - 1);
+            // Assign each lyric note to a chord region by proportional position
+            const assignments = lyricNotes.map((_, idx) => {
+                const targetOffset = Math.floor((idx / total) * totalChordSteps);
+                let cum = 0;
+                for (const chord of sortedChords) {
+                    cum += chord.lenSteps;
+                    if (targetOffset < cum) return chord;
                 }
+                return sortedChords[sortedChords.length - 1];
+            });
+
+            // Group note indices by chord (use object reference — avoids Date.now() ID collision)
+            const chordNoteMap = new Map();
+            assignments.forEach((chord, idx) => {
+                if (!chordNoteMap.has(chord)) chordNoteMap.set(chord, { chord, indices: [] });
+                chordNoteMap.get(chord).indices.push(idx);
+            });
+
+            // ── PLACE + PITCH per chord region ───────────────────────
+            chordNoteMap.forEach(({ chord, indices }) => {
+                const stepsPerNote  = Math.max(2, Math.floor(chord.lenSteps / indices.length));
+                const chordToneRows = getChordToneRows(chord.chordDef.notes, minRow, maxRow);
+
+                indices.forEach((globalIdx, localIdx) => {
+                    const ref = drawnNotes.find(n => n.id === lyricNotes[globalIdx].id);
+                    if (!ref) return;
+
+                    // Reposition note to land inside chord region
+                    ref.startStep = Math.min(ALL_STEPS - 1, chord.startStep + localIdx * stepsPerNote);
+
+                    // Duration: fraction of allocated space (prosody-driven)
+                    const sylW    = getSyllableWeight(ref.text);
+                    ref.lenSteps  = calcDuration(sylW, stepsPerNote);
+
+                    // Micro-rest on weak beats: clip duration a bit
+                    if (!stress[globalIdx] && ref.lenSteps > 1 && Math.random() > 0.7) {
+                        ref.lenSteps = Math.max(1, ref.lenSteps - 1);
+                    }
+
+                    // Pitch: contour + chord tone + Thai tone direction
+                    const pos        = total > 1 ? globalIdx / (total - 1) : 0.5;
+                    const contourRow = getContourRow(contour, pos, minRow, maxRow);
+                    const toneDir    = getThaiToneDirection(ref.text);
+
+                    // Strong beats → chord tones; weak beats → scale passing tones
+                    const pool = (stress[globalIdx] && chordToneRows.length > 0) ? chordToneRows : scaleRows;
+                    ref.row  = pickRowProsody(toneDir, prevRow, contourRow, pool, scaleRows);
+                    prevRow  = ref.row;
+                });
             });
 
             // Re-render
@@ -3250,7 +3268,7 @@
             drawnNotes.forEach(n => renderNote(n));
 
             const status = document.getElementById('composeStatus');
-            status.textContent = `✓ [${contour.toUpperCase()}] ${aiSection} / ${aiRange} — ${lyricNotes.length} syllables composed`;
+            status.textContent = `✓ [${contour.toUpperCase()}] ${aiSection}/${aiRange} — ${total} syllables · ${sortedChords.length} chords`;
         }
 
         function aiUndoCompose() {
