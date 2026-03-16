@@ -1208,11 +1208,11 @@
 
         // ─── INIT ────────────────────────────────────────────
         function init() {
-            // Resize card/grid to fit 4 bars into horizontal layout
+            // Fit all bars into the available card width
             const card = document.getElementById('pianoRollCard');
             if (card) {
-                const avail = card.clientWidth - LABEL_W - 24; // safety padding for scrollbars
-                STEP_W = Math.max(16, Math.floor(avail / ALL_STEPS));
+                const avail = card.clientWidth - LABEL_W - 20;
+                STEP_W = Math.max(10, Math.floor(avail / ALL_STEPS));
                 document.documentElement.style.setProperty('--step-w', STEP_W + 'px');
             }
 
@@ -3197,7 +3197,8 @@
         // Poll to keep Compose button state updated
         setInterval(updateComposeMelodyBtn, 600);
 
-        init();
+        // Defer init until layout is complete so clientWidth is accurate
+        window.addEventListener('load', init);
 
     </script>
 
