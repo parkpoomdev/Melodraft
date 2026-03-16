@@ -62,6 +62,12 @@
             color: #fff;
         }
 
+        .tb-btn.active {
+            background: var(--accent-dim);
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
         .tb-btn.accent {
             background: var(--accent);
             color: #000;
@@ -639,6 +645,10 @@
             box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
         }
 
+        .note-block.selected {
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 2px rgba(212, 247, 51, 0.9), 0 0 12px rgba(212, 247, 51, 0.35);
+        }
+
         .note-block .resize-handle {
             position: absolute;
             right: 0;
@@ -652,6 +662,28 @@
 
         .note-block:hover .resize-handle {
             opacity: 1;
+        }
+
+        .selection-rect {
+            position: absolute;
+            border: 1px dashed var(--accent);
+            background: rgba(212, 247, 51, 0.12);
+            pointer-events: none;
+            z-index: 25;
+            display: none;
+        }
+
+        .piano-grid.tool-pointer {
+            cursor: default;
+        }
+
+        .piano-grid.tool-rect {
+            cursor: crosshair;
+        }
+
+        .piano-grid.tool-rect .note-block,
+        .piano-grid.tool-rect .note-block .resize-handle {
+            pointer-events: none;
         }
 
         /* Playhead */
@@ -826,6 +858,18 @@
 
     <!-- ─── Main Composer ─── -->
     <main class="main">
+        <!-- ─── Thai Input Card ─── -->
+        <div class="composer-card" style="margin-bottom: 20px; height: auto; min-height: 100px;">
+            <div class="card-header">
+                <span class="card-badge">MODULE // THAI WORD CUTTER</span>
+                <span class="card-title">Input Text</span>
+            </div>
+            <div style="padding: 20px;">
+                <input id="thaiInput" type="text" placeholder="Type Thai text and press Enter..." 
+                    style="width: 100%; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-family: 'JetBrains Mono'; font-size: 1rem; padding: 10px; border-radius: 4px;">
+            </div>
+        </div>
+
         <div class="composer-card">
 
             <div class="card-header">
@@ -836,6 +880,10 @@
                     <button class="tb-btn" onclick="stopTransport()">STOP</button>
                     <button class="tb-btn" id="loopBtn" onclick="toggleLoop()">LOOP</button>
                     <button class="tb-btn" id="metroBtn" onclick="toggleMetronome()">METRO</button>
+                    <div class="tb-sep"></div>
+                    <button class="tb-btn active" id="drawToolBtn" onclick="setActiveTool('draw')" title="Draw tool" aria-label="Draw tool">✎</button>
+                    <button class="tb-btn" id="pointerToolBtn" onclick="setActiveTool('pointer')" title="Pointer tool" aria-label="Pointer tool">↖</button>
+                    <button class="tb-btn" id="rectToolBtn" onclick="setActiveTool('rect')" title="Rectangle tool" aria-label="Rectangle tool">▢</button>
                     <div class="tb-sep"></div>
                     <span class="tb-label">BPM</span>
                     <input class="bpm-input" type="number" id="bpmInput" value="120" min="40" max="240">
@@ -1057,13 +1105,22 @@
         let drawRow = -1;
         let activeNoteEl = null;
         let isResizing = false;
+        let activeTool = 'draw';
+        let selectedNoteIds = new Set();
         let isNoteDragging = false;
         let noteDragNote = null;
         let noteDragEl = null;
+        let noteDragMoved = false;
         let noteDragStartX = 0;
         let noteDragStartY = 0;
         let noteDragOrigStep = 0;
         let noteDragOrigRow = 0;
+        let noteDragSelection = [];
+        let isMarqueeSelecting = false;
+        let marqueeStartCol = -1;
+        let marqueeStartRow = -1;
+        let marqueeCurrentCol = -1;
+        let marqueeCurrentRow = -1;
         let isChordResizing = false;
         let isChordDragging = false;
         let chordDragRegionId = null;
@@ -1114,6 +1171,98 @@
             buildBarHeaders();
             buildTimelineRuler();
             buildChordPicker();
+            setActiveTool('draw');
+        }
+
+        function setActiveTool(tool) {
+            activeTool = tool;
+
+            const toolButtons = {
+                draw: document.getElementById('drawToolBtn'),
+                pointer: document.getElementById('pointerToolBtn'),
+                rect: document.getElementById('rectToolBtn')
+            };
+
+            Object.entries(toolButtons).forEach(([key, btn]) => {
+                if (!btn) return;
+                btn.classList.toggle('active', key === tool);
+            });
+
+            const grid = document.getElementById('pianoGrid');
+            if (grid) {
+                grid.classList.remove('tool-draw', 'tool-pointer', 'tool-rect');
+                grid.classList.add(`tool-${tool}`);
+            }
+
+            if (tool !== 'pointer' && tool !== 'rect') clearSelectedNotes();
+            if (tool !== 'rect') hideSelectionRect();
+        }
+
+        function clearSelectedNotes() {
+            selectedNoteIds.clear();
+            updateSelectedNoteStyles();
+        }
+
+        function setSelectedNotes(noteIds) {
+            selectedNoteIds = new Set(noteIds);
+            updateSelectedNoteStyles();
+        }
+
+        function toggleSelectedNote(noteId) {
+            if (selectedNoteIds.has(noteId)) selectedNoteIds.delete(noteId);
+            else selectedNoteIds.add(noteId);
+            updateSelectedNoteStyles();
+        }
+
+        function updateSelectedNoteStyles() {
+            document.querySelectorAll('.note-block').forEach(el => {
+                const noteId = Number(el.dataset.noteId);
+                el.classList.toggle('selected', selectedNoteIds.has(noteId));
+            });
+        }
+
+        function getGridPointerPosition(e) {
+            const grid = document.getElementById('pianoGrid');
+            const scrollEl = document.getElementById('rollWrapper');
+            const rect = grid.getBoundingClientRect();
+            const x = e.clientX - rect.left + scrollEl.scrollLeft;
+            const y = e.clientY - rect.top + scrollEl.scrollTop;
+            const col = Math.max(0, Math.min(ALL_STEPS - 1, Math.floor(x / STEP_W)));
+            const row = Math.max(0, Math.min(NOTE_COUNT - 1, Math.floor(y / NOTE_H)));
+            return { x, y, col, row };
+        }
+
+        function showSelectionRect(startCol, startRow, endCol, endRow) {
+            const rectEl = document.getElementById('selectionRect');
+            if (!rectEl) return;
+            const minCol = Math.min(startCol, endCol);
+            const maxCol = Math.max(startCol, endCol);
+            const minRow = Math.min(startRow, endRow);
+            const maxRow = Math.max(startRow, endRow);
+
+            rectEl.style.display = 'block';
+            rectEl.style.left = `${minCol * STEP_W}px`;
+            rectEl.style.top = `${minRow * NOTE_H}px`;
+            rectEl.style.width = `${(maxCol - minCol + 1) * STEP_W}px`;
+            rectEl.style.height = `${(maxRow - minRow + 1) * NOTE_H}px`;
+        }
+
+        function hideSelectionRect() {
+            const rectEl = document.getElementById('selectionRect');
+            if (rectEl) rectEl.style.display = 'none';
+        }
+
+        function selectNotesInRectangle(startCol, startRow, endCol, endRow) {
+            const minCol = Math.min(startCol, endCol);
+            const maxCol = Math.max(startCol, endCol);
+            const minRow = Math.min(startRow, endRow);
+            const maxRow = Math.max(startRow, endRow);
+
+            const hits = drawnNotes
+                .filter(note => note.row >= minRow && note.row <= maxRow && note.startStep <= maxCol && (note.startStep + note.lenSteps - 1) >= minCol)
+                .map(note => note.id);
+
+            setSelectedNotes(hits);
         }
 
         // Build the key labels on the left
@@ -1276,13 +1425,15 @@
         // Build the main drawable grid
         function buildGrid() {
             const grid = document.getElementById('pianoGrid');
-            grid.innerHTML = '<div class="playhead" id="playhead"></div>';
+            grid.innerHTML = '<div class="playhead" id="playhead"></div><div class="selection-rect" id="selectionRect"></div>';
             grid.style.display = 'grid';
             grid.style.gridTemplateColumns = `repeat(${ALL_STEPS}, ${STEP_W}px)`;
             grid.style.gridTemplateRows = `repeat(${NOTE_COUNT}, ${NOTE_H}px)`;
             grid.style.width = `${ALL_STEPS * STEP_W}px`;
             grid.style.height = `${NOTE_COUNT * NOTE_H}px`;
             grid.style.position = 'relative';
+            grid.classList.remove('tool-draw', 'tool-pointer', 'tool-rect');
+            grid.classList.add(`tool-${activeTool}`);
 
             for (let r = 0; r < NOTE_COUNT; r++) {
                 const note = ALL_NOTES[r];
@@ -1443,6 +1594,21 @@
 
             if (e.ctrlKey) { deleteNoteAt(row, col); return; }
 
+            if (activeTool === 'pointer') {
+                clearSelectedNotes();
+                return;
+            }
+
+            if (activeTool === 'rect') {
+                isMarqueeSelecting = true;
+                marqueeStartCol = col;
+                marqueeStartRow = row;
+                marqueeCurrentCol = col;
+                marqueeCurrentRow = row;
+                showSelectionRect(col, row, col, row);
+                return;
+            }
+
             isDrawing = true;
             drawRow = row;
             drawStartCol = col;
@@ -1459,6 +1625,13 @@
         }
 
         window.addEventListener('mousemove', (e) => {
+            if (isMarqueeSelecting) {
+                const pos = getGridPointerPosition(e);
+                marqueeCurrentCol = pos.col;
+                marqueeCurrentRow = pos.row;
+                showSelectionRect(marqueeStartCol, marqueeStartRow, marqueeCurrentCol, marqueeCurrentRow);
+                return;
+            }
             if (!isDrawing || !activeNoteEl) return;
             const grid = document.getElementById('pianoGrid');
             const rect = grid.getBoundingClientRect();
@@ -1471,6 +1644,15 @@
         });
 
         window.addEventListener('mouseup', (e) => {
+            if (isMarqueeSelecting) {
+                selectNotesInRectangle(marqueeStartCol, marqueeStartRow, marqueeCurrentCol, marqueeCurrentRow);
+                hideSelectionRect();
+                isMarqueeSelecting = false;
+                marqueeStartCol = -1;
+                marqueeStartRow = -1;
+                marqueeCurrentCol = -1;
+                marqueeCurrentRow = -1;
+            }
             if (isDrawing) {
                 // Commit note
                 const grid = document.getElementById('pianoGrid');
@@ -1530,30 +1712,51 @@
             const el = document.createElement('div');
             el.className = 'note-block';
             el.dataset.noteId = note.id;
-            el.textContent = ALL_NOTES[note.row].name.replace(/(\D+)(\d)/, '$1');
+            const noteName = ALL_NOTES[note.row].name.replace(/(\D+)(\d)/, '$1');
+            el.textContent = note.text ? `${noteName} ${note.text}` : noteName;
             positionNoteEl(el, note.row, note.startStep, note.lenSteps);
+            el.classList.toggle('selected', selectedNoteIds.has(note.id));
             // Right-click to delete
             el.addEventListener('contextmenu', (e) => { e.preventDefault(); removeNote(note.id); });
             // Drag to move (body only, not resize handle)
             el.addEventListener('mousedown', (e) => {
                 if (e.button !== 0) return;
+                if (activeTool !== 'pointer') return;
                 if (e.target.classList.contains('resize-handle')) return;
                 e.stopPropagation();
                 e.preventDefault();
+
+                if (e.shiftKey) {
+                    toggleSelectedNote(note.id);
+                    return;
+                }
+
+                if (!selectedNoteIds.has(note.id)) setSelectedNotes([note.id]);
                 startNoteDrag(e, note, el);
             });
             // Add resize handle
             const rh = document.createElement('div');
             rh.className = 'resize-handle';
-            rh.addEventListener('mousedown', (e) => startResize(e, note, el));
+            rh.addEventListener('mousedown', (e) => {
+                if (activeTool !== 'pointer') return;
+                startResize(e, note, el);
+            });
             el.appendChild(rh);
             grid.appendChild(el);
         }
 
         function removeNote(id) {
             drawnNotes = drawnNotes.filter(n => n.id !== id);
+            selectedNoteIds.delete(id);
             const el = document.querySelector(`[data-note-id="${id}"]`);
             if (el) el.remove();
+        }
+
+        function removeSelectedNotes() {
+            const noteIds = Array.from(selectedNoteIds);
+            if (noteIds.length === 0) return;
+            noteIds.forEach(id => removeNote(id));
+            clearSelectedNotes();
         }
 
         function deleteNoteAt(row, col) {
@@ -1587,10 +1790,14 @@
             isNoteDragging = true;
             noteDragNote = note;
             noteDragEl = el;
+            noteDragMoved = false;
             noteDragStartX = e.clientX;
             noteDragStartY = e.clientY;
             noteDragOrigStep = note.startStep;
             noteDragOrigRow = note.row;
+            noteDragSelection = drawnNotes
+                .filter(n => selectedNoteIds.has(n.id))
+                .map(n => ({ id: n.id, startStep: n.startStep, row: n.row, lenSteps: n.lenSteps }));
             el.style.cursor = 'grabbing';
             el.style.opacity = '0.75';
             el.style.zIndex = '20';
@@ -1616,16 +1823,30 @@
                 const dy = ev.clientY - noteDragStartY;
                 const dSteps = Math.round(dx / STEP_W);
                 const dRows = Math.round(dy / NOTE_H);
-                const newStep = Math.max(0, Math.min(ALL_STEPS - noteDragNote.lenSteps, noteDragOrigStep + dSteps));
-                const newRow = Math.max(0, Math.min(NOTE_COUNT - 1, noteDragOrigRow + dRows));
-                noteDragNote.startStep = newStep;
-                noteDragNote.row = newRow;
-                noteDragEl.style.left = `${newStep * STEP_W + 1}px`;
-                noteDragEl.style.top = `${newRow * NOTE_H + 2}px`;
-                // Update label text node without removing resize handle child
-                Array.from(noteDragEl.childNodes).forEach(node => {
-                    if (node.nodeType === Node.TEXT_NODE)
-                        node.textContent = ALL_NOTES[newRow].name.replace(/(\D+)(\d)/, '$1');
+                noteDragMoved = noteDragMoved || Math.abs(dx) > 2 || Math.abs(dy) > 2;
+
+                const minStep = Math.min(...noteDragSelection.map(n => n.startStep));
+                const maxEnd = Math.max(...noteDragSelection.map(n => n.startStep + n.lenSteps));
+                const minRow = Math.min(...noteDragSelection.map(n => n.row));
+                const maxRow = Math.max(...noteDragSelection.map(n => n.row));
+                const clampedStepOffset = Math.max(-minStep, Math.min(ALL_STEPS - maxEnd, dSteps));
+                const clampedRowOffset = Math.max(-minRow, Math.min((NOTE_COUNT - 1) - maxRow, dRows));
+
+                noteDragSelection.forEach(snapshot => {
+                    const noteRef = drawnNotes.find(n => n.id === snapshot.id);
+                    const noteEl = document.querySelector(`[data-note-id="${snapshot.id}"]`);
+                    if (!noteRef || !noteEl) return;
+
+                    noteRef.startStep = snapshot.startStep + clampedStepOffset;
+                    noteRef.row = snapshot.row + clampedRowOffset;
+                    noteEl.style.left = `${noteRef.startStep * STEP_W + 1}px`;
+                    noteEl.style.top = `${noteRef.row * NOTE_H + 2}px`;
+                    Array.from(noteEl.childNodes).forEach(node => {
+                        if (node.nodeType === Node.TEXT_NODE) {
+                            const noteName = ALL_NOTES[noteRef.row].name.replace(/(\D+)(\d)/, '$1');
+                            node.textContent = noteRef.text ? `${noteName} ${noteRef.text}` : noteName;
+                        }
+                    });
                 });
             }
             if (isResizing && resizeNote) {
@@ -1707,7 +1928,7 @@
                 noteDragEl.style.opacity = '';
                 noteDragEl.style.zIndex = '';
                 // Play the note at its new pitch on drop
-                if (noteDragNote) {
+                if (noteDragNote && noteDragMoved) {
                     initAudio();
                     const freq = NOTE_FREQ[ALL_NOTES[noteDragNote.row].name];
                     if (freq) playNote(freq, audioCtx.currentTime, 0.3);
@@ -1716,6 +1937,7 @@
             isNoteDragging = false;
             noteDragNote = null;
             noteDragEl = null;
+            noteDragSelection = [];
             if (isDrawing || isResizing) {
                 // Let other listeners handle
             }
@@ -1860,6 +2082,7 @@
             // Ignore clicks when drawing, resizing, or on a note block
             if (isDrawing || isResizing) return;
             if (e.target.closest('.note-block')) return;
+            if (activeTool !== 'draw') return;
             const rect = this.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const col = Math.floor(x / STEP_W);
@@ -1868,6 +2091,12 @@
 
         // Spacebar shortcut for play/pause
         document.addEventListener('keydown', function (e) {
+            if ((e.key === 'Delete' || e.key === 'Backspace') && activeTool !== 'draw') {
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+                e.preventDefault();
+                removeSelectedNotes();
+                return;
+            }
             if (e.code === 'Space' && !e.repeat) {
                 // Do not override if the input field is currently active
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
@@ -2243,6 +2472,8 @@
             // Clear existing chord regions and notes
             document.querySelectorAll('.chord-region').forEach(el => el.remove());
             document.querySelectorAll('.note-block').forEach(el => el.remove());
+            clearSelectedNotes();
+            hideSelectionRect();
 
             // Set globals
             chordRegions = comp.chordRegions.map(r => ({ ...r }));
@@ -2318,6 +2549,8 @@
 
         function clearSequencer() {
             document.getElementById('confirmModal').style.display = 'flex';
+            clearSelectedNotes();
+            hideSelectionRect();
         }
 
         function renderPlaylist() {
@@ -2553,6 +2786,61 @@
             requestAnimationFrame(playlistTransport);
         }
 
+
+        function performClearSequencer() {
+            chordRegions.forEach(r => r.el && r.el.remove());
+            chordRegions = [];
+            document.querySelectorAll('.note-block').forEach(el => el.remove());
+            drawnNotes = [];
+            currentEditingId = null;
+            renderPlaylist();
+        }
+
+        function handleThaiInput(e) {
+            if (e.key !== 'Enter') return;
+            const text = e.target.value.trim();
+            if (!text) return;
+
+            if (typeof Intl.Segmenter !== 'function') {
+                alert('Intl.Segmenter is not supported in this browser.');
+                return;
+            }
+
+            const segmenter = new Intl.Segmenter('th', { granularity: 'word' });
+            const segments = segmenter.segment(text);
+            const words = Array.from(segments).filter(s => s.isWordLike).map(s => s.segment);
+
+            if (words.length === 0) return;
+
+            performClearSequencer();
+
+            const wordCount = words.length;
+            const stepsPerWord = Math.floor(ALL_STEPS / wordCount);
+            const c4Index = 24; // C4 is at index 24 in ALL_NOTES
+
+            words.forEach((word, i) => {
+                const startStep = i * stepsPerWord;
+                const note = {
+                    row: c4Index,
+                    startStep: startStep,
+                    lenSteps: stepsPerWord,
+                    id: Date.now() + i,
+                    text: word
+                };
+                drawnNotes.push(note);
+                renderNote(note);
+            });
+
+            // Add C chords to each bar
+            const cChord = CHORDS.find(c => c.label === 'C');
+            if (cChord) {
+                for (let b = 0; b < BARS; b++) {
+                    addChordRegion(b * STEPS, JSON.parse(JSON.stringify(cChord)));
+                }
+            }
+        }
+
+        document.getElementById('thaiInput').addEventListener('keydown', handleThaiInput);
 
         init();
 
