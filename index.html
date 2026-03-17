@@ -10,6 +10,8 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap"
         rel="stylesheet">
+    <!-- Tone.js for Salamander Grand Piano samples -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         :root {
             --bg: #222222;
@@ -20,7 +22,7 @@
             --text: #d1d1d1;
             --text-dim: #777777;
             --border: #404040;
-            --note-h: 28px;
+            --note-h: 17px;
             --step-w: 28px;
             --label-w: 38px;
             --bars: 8;
@@ -933,8 +935,8 @@
             </div>
         </div>
 
-        <!-- 1 octave visible: card-header(41) + bar-header(54) + ruler(20) + 12*NOTE_H(336) = 451px -->
-        <div class="composer-card" id="pianoRollCard" style="height:451px; min-height:451px;">
+        <!-- outer container +40%: 319 × 1.4 = 447px -->
+        <div class="composer-card" id="pianoRollCard" style="height:447px; min-height:447px;">
 
             <div class="card-header">
                 <span class="card-badge">MODULE // COMPOSITION</span>
@@ -959,6 +961,8 @@
                     <button class="tb-btn accent" onclick="exportFullMIDI()" title="Export melody + chords as multi-track MIDI">↑ FULL.MID</button>
                     <div class="tb-sep"></div>
                     <button class="tb-btn" onclick="addToPlaylist()">ADD TO PLAYLIST</button>
+                    <div class="tb-sep"></div>
+                    <span id="pianoSamplerStatus" style="font-family:'JetBrains Mono';font-size:0.65rem;color:var(--text-dim);">◌ SYNTH</span>
                 </div>
             </div>
 
@@ -1160,7 +1164,7 @@
         };
 
         // ─── STATE ───────────────────────────────────────────
-        let NOTE_H = 28; // px, matches CSS var
+        let NOTE_H = 17; // px, matches CSS var (28 × 0.6 = ~17, −40% height)
         let STEP_W = 28; // px, matches CSS var
         const LABEL_W = 38; // px
 
@@ -1173,6 +1177,13 @@
         let playheadPos = 0;
         let lastStep = -1;
         let audioCtx = null;
+        let pianoSampler = null;
+        let samplerReady = false;
+        let samplerLoading = false;
+        // Reverse lookup: frequency → note name (for sampler)
+        const FREQ_TO_NOTE = Object.fromEntries(
+            Object.entries(NOTE_FREQ).map(([name, freq]) => [freq, name])
+        );
         let pickerTargetBar = -1;
 
         // Drawing state
@@ -2045,14 +2056,66 @@
             chordResizeRegionId = null;
         });
 
-        // ─── AUDIO  — Piano-like timbre ───────────────────────
+        // ─── AUDIO  — Salamander Grand Piano + Oscillator fallback ───
         function initAudio() {
-            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            if (audioCtx.state === 'suspended') audioCtx.resume();
+            // Use Tone.js AudioContext so sampler shares same context
+            if (!audioCtx) {
+                if (typeof Tone !== 'undefined') {
+                    Tone.start();
+                    audioCtx = Tone.getContext().rawContext;
+                } else {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+                if (typeof Tone !== 'undefined') Tone.start();
+            }
+            // Lazy-load Salamander samples on first interaction
+            if (!samplerReady && !samplerLoading && typeof Tone !== 'undefined') {
+                loadSalamander();
+            }
         }
 
-        // Simulate grand piano: layered sine partials with fast attack, long decay
+        function loadSalamander() {
+            samplerLoading = true;
+            const statusEl = document.getElementById('pianoSamplerStatus');
+            if (statusEl) { statusEl.textContent = '⏳ LOADING...'; statusEl.style.color = 'var(--text-dim)'; }
+
+            pianoSampler = new Tone.Sampler({
+                urls: {
+                    A0:'A0.mp3',  C1:'C1.mp3',  'D#1':'Ds1.mp3', 'F#1':'Fs1.mp3',
+                    A1:'A1.mp3',  C2:'C2.mp3',  'D#2':'Ds2.mp3', 'F#2':'Fs2.mp3',
+                    A2:'A2.mp3',  C3:'C3.mp3',  'D#3':'Ds3.mp3', 'F#3':'Fs3.mp3',
+                    A3:'A3.mp3',  C4:'C4.mp3',  'D#4':'Ds4.mp3', 'F#4':'Fs4.mp3',
+                    A4:'A4.mp3',  C5:'C5.mp3',  'D#5':'Ds5.mp3', 'F#5':'Fs5.mp3',
+                    A5:'A5.mp3',  C6:'C6.mp3',  'D#6':'Ds6.mp3', 'F#6':'Fs6.mp3',
+                    A6:'A6.mp3',  C7:'C7.mp3',  'D#7':'Ds7.mp3', 'F#7':'Fs7.mp3',
+                    A7:'A7.mp3',  C8:'C8.mp3'
+                },
+                baseUrl: 'https://tonejs.github.io/audio/salamander/',
+                onload: () => {
+                    samplerReady = true;
+                    samplerLoading = false;
+                    if (statusEl) { statusEl.textContent = '🎹 GRAND PIANO'; statusEl.style.color = 'var(--accent)'; }
+                },
+                onerror: () => {
+                    samplerLoading = false;
+                    if (statusEl) { statusEl.textContent = '◌ SYNTH'; statusEl.style.color = 'var(--text-dim)'; }
+                }
+            }).toDestination();
+        }
+
+        // Play note — uses Salamander sampler if ready, else oscillator fallback
         function playNote(freq, when, dur) {
+            if (samplerReady && pianoSampler) {
+                const noteName = FREQ_TO_NOTE[freq];
+                if (noteName) {
+                    pianoSampler.triggerAttackRelease(noteName, Math.max(0.1, dur || 0.5), when);
+                    return;
+                }
+            }
+            // ── Oscillator fallback ──────────────────────────────
             const master = audioCtx.createGain();
             master.gain.setValueAtTime(0, when);
             master.gain.linearRampToValueAtTime(0.22, when + 0.005);   // fast attack
@@ -2092,6 +2155,14 @@
         // Play a full chord (all notes staggered slightly for piano realism)
         function playChordNotes(notes, when, dur) {
             initAudio();
+            if (samplerReady && pianoSampler) {
+                // Use sampler directly with note names — no freq conversion needed
+                notes.forEach((noteName, i) => {
+                    pianoSampler.triggerAttackRelease(noteName, Math.max(0.2, dur), when + i * 0.012);
+                });
+                return;
+            }
+            // Oscillator fallback
             notes.forEach((noteName, i) => {
                 const freq = NOTE_FREQ[noteName];
                 if (freq) playNote(freq, when + i * 0.012, dur);
