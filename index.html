@@ -1076,6 +1076,14 @@
     </div>
 
     <script>
+        // ── TONAL.JS — load once, expose globally ─────────────
+        const _tonalReady = import('https://esm.sh/tonal@6.4.0').then(t => {
+            window.TonalChord = t.Chord;
+            window.TonalScale = t.Scale;
+            window.TonalNote  = t.Note;
+            window.TonalKey   = t.Key;
+        }).catch(() => { /* fallback: existing custom logic still works */ });
+
         // ─── CONSTANTS ───────────────────────────────────────
         const BARS = 8;
         const STEPS = 16;  // Steps per bar
@@ -3214,11 +3222,22 @@
         }
 
         // Get ALL_NOTES row indices for chord tones within range
-        function getChordToneRows(chordNotes, minRow, maxRow) {
-            const base = n => n.replace(/\d+$/, '');
-            const chordBases = chordNotes.map(base);
+        function getChordToneRows(chordNotes, minRow, maxRow, chordLabel) {
+            let chordBases = null;
+            // ── Tonal.js path ────────────────────────────────
+            if (chordLabel && window.TonalChord) {
+                const info = TonalChord.get(chordLabel);
+                if (info && info.notes && info.notes.length > 0) {
+                    chordBases = info.notes.map(n => n.replace(/\d/, ''));
+                }
+            }
+            // ── Fallback: strip octave from provided notes ────
+            if (!chordBases) {
+                const stripOct = n => n.replace(/\d+$/, '');
+                chordBases = chordNotes.map(stripOct);
+            }
             return ALL_NOTES
-                .map((n, i) => ({ b: base(n.name), i }))
+                .map((n, i) => ({ b: n.name.replace(/\d+$/, ''), i }))
                 .filter(({ b, i }) => chordBases.includes(b) && i >= minRow && i <= maxRow)
                 .map(({ i }) => i);
         }
@@ -3230,7 +3249,26 @@
 
         // Derive diatonic scale rows from a chord's label (e.g. "Am", "F", "C#m")
         function getDiatonicRows(chordDef, minRow, maxRow) {
-            const m = (chordDef.label || '').match(/^([A-G][b#]?)(m|min)?/i);
+            const label = chordDef.label || '';
+            // ── Tonal.js path (accurate) ──────────────────────
+            if (window.TonalChord && window.TonalScale) {
+                const info = TonalChord.get(label);
+                const tonic = info && info.tonic ? info.tonic : null;
+                if (tonic) {
+                    const isMinor = info.quality === 'Minor' || info.quality === 'Diminished';
+                    const scaleName = `${tonic} ${isMinor ? 'minor' : 'major'}`;
+                    const scaleInfo = TonalScale.get(scaleName);
+                    if (scaleInfo && scaleInfo.notes && scaleInfo.notes.length > 0) {
+                        const diatonicSet = new Set(scaleInfo.notes.map(n => n.replace(/\d/, '')));
+                        return ALL_NOTES
+                            .map((n, i) => ({ base: n.name.replace(/\d+$/, ''), i }))
+                            .filter(({ base, i }) => diatonicSet.has(base) && i >= minRow && i <= maxRow)
+                            .map(({ i }) => i);
+                    }
+                }
+            }
+            // ── Fallback: custom regex logic ──────────────────
+            const m = label.match(/^([A-G][b#]?)(m|min)?/i);
             if (!m) return [];
             const rootPC   = PC[m[1]] ?? 0;
             const isMinor  = !!(m[2]);
@@ -3313,93 +3351,195 @@
             return Array.from({ length: count }, (_, i) => pat[i % pat.length]);
         }
 
+        // ── MOTIF / PHRASE MEMORY SYSTEM ─────────────────────
+        let sessionMotif        = null;  // { pitches, rhythms, contour }
+        let sessionBlockPattern = null;  // 'AABA' | 'AABB' | 'ABAB'
+        const BLOCK_PATTERNS    = ['AABA', 'AABB', 'ABAB'];
+        const DEV_MODES         = ['pure_reprise','append','partial_pitch','preserve_outline','preserve_rhythm'];
+
+        function extractMotif(notes) {
+            const n = Math.max(2, Math.min(4, Math.ceil(notes.length / 3)));
+            const seed = notes.slice(0, n);
+            return {
+                pitches: seed.map(s => s.row),
+                rhythms: seed.map(s => s.lenSteps),
+                contour: seed.map((s, i, a) => i === 0 ? 0 : s.row - a[i - 1].row)
+            };
+        }
+
+        function transformMotif(motif, mode, chordRows, scaleRows, anchorRow) {
+            const pool = chordRows.length > 0 ? chordRows : scaleRows;
+            const snap = r => pool.reduce((a, b) => Math.abs(b - r) < Math.abs(a - r) ? b : a, pool[0]);
+            switch (mode) {
+                case 'pure_reprise':
+                    return { pitches: [...motif.pitches], rhythms: [...motif.rhythms] };
+
+                case 'append': {
+                    const extra  = Math.floor(Math.random() * 2) + 1;
+                    const pts    = [...motif.pitches];
+                    const rhy    = [...motif.rhythms];
+                    for (let k = 0; k < extra; k++) {
+                        pts.push(pool[Math.floor(Math.random() * pool.length)]);
+                        rhy.push(rhy[rhy.length - 1]);
+                    }
+                    return { pitches: pts, rhythms: rhy };
+                }
+
+                case 'partial_pitch':
+                    return {
+                        pitches: motif.pitches.map(p =>
+                            Math.random() > 0.45 ? p : pool[Math.floor(Math.random() * pool.length)]),
+                        rhythms: [...motif.rhythms]
+                    };
+
+                case 'preserve_outline': {
+                    let cur = anchorRow;
+                    const pts = motif.contour.map(delta => {
+                        cur = Math.max(0, Math.min(ALL_NOTES.length - 1, cur + delta));
+                        return pool.length > 0 ? snap(cur) : cur;
+                    });
+                    return { pitches: pts, rhythms: [...motif.rhythms] };
+                }
+
+                case 'preserve_rhythm':
+                    return {
+                        pitches: motif.pitches.map(() => pool[Math.floor(Math.random() * pool.length)]),
+                        rhythms: [...motif.rhythms]
+                    };
+
+                default:
+                    return { pitches: [...motif.pitches], rhythms: [...motif.rhythms] };
+            }
+        }
+
+        // Which block (A=statement / B=departure) this note index falls in
+        function getBlockPhase(noteIdx, total, pattern) {
+            const phraseLen = Math.max(1, Math.floor(total / pattern.length));
+            const pIdx      = Math.min(pattern.length - 1, Math.floor(noteIdx / phraseLen));
+            return pattern[pIdx]; // 'A' or 'B'
+        }
+
         // Main AI compose — Lyric Prosody Engine v2 (chord-aware redistribution)
         function aiComposeMelody() {
             const lyricNotes = drawnNotes.filter(n => n.text).sort((a, b) => a.startStep - b.startStep);
             if (lyricNotes.length === 0 || chordRegions.length === 0) { updateComposeMelodyBtn(); return; }
 
-            // Save undo
+            // ── Save undo snapshot ────────────────────────────
             aiUndoSnapshot = drawnNotes.map(n => ({ ...n }));
             document.getElementById('undoComposeBtn').style.display = 'inline-block';
 
             const { min: minRow, max: maxRow } = getRowRange();
             const scaleRows = ALL_NOTES.map((_, i) => i).filter(i => i >= minRow && i <= maxRow);
 
-            // ── Per-run randomization seeds ───────────────────────────
-            const contourShapes = ['arch', 'valley', 'ascending', 'descending', 'wave', 'stepUp', 'stepDown'];
-            const contour = contourShapes[Math.floor(Math.random() * contourShapes.length)];
+            // ── Per-run random seeds ──────────────────────────
+            const contourShapes = ['arch','valley','ascending','descending','wave','stepUp','stepDown'];
+            const contour       = contourShapes[Math.floor(Math.random() * contourShapes.length)];
+            const spread        = Math.floor((maxRow - minRow) * 0.4);
+            const startBias     = Math.floor((Math.random() - 0.5) * spread * 2);
+            let   prevRow       = Math.max(minRow, Math.min(maxRow, Math.floor((minRow + maxRow) / 2) + startBias));
+            const stress        = buildStressPattern(lyricNotes.length);
+            const total         = lyricNotes.length;
 
-            const spread = Math.floor((maxRow - minRow) * 0.4);
-            let prevRow = Math.max(minRow, Math.min(maxRow,
-                Math.floor((minRow + maxRow) / 2) + Math.floor((Math.random() - 0.5) * spread * 2)));
+            // ── Block pattern (stable per session, re-roll each compose) ─
+            sessionBlockPattern = BLOCK_PATTERNS[Math.floor(Math.random() * BLOCK_PATTERNS.length)];
+            const devModeA      = DEV_MODES[Math.floor(Math.random() * 3)]; // pure/append/partial for A
+            const devModeB      = DEV_MODES[2 + Math.floor(Math.random() * 3)]; // outline/rhythm/partial for B
 
-            const stress = buildStressPattern(lyricNotes.length);
-            const total  = lyricNotes.length;
-
-            // ── CHORD-AWARE REDISTRIBUTION ────────────────────────────
-            // Sort chords by position; map each lyric note proportionally into a chord region
+            // ── Sort chord regions ────────────────────────────
             const sortedChords     = [...chordRegions].sort((a, b) => a.startStep - b.startStep);
             const totalChordSteps  = sortedChords.reduce((s, r) => s + r.lenSteps, 0);
 
-            // Assign each lyric note to a chord region by proportional position
-            const assignments = lyricNotes.map((_, idx) => {
-                const targetOffset = Math.floor((idx / total) * totalChordSteps);
-                let cum = 0;
-                for (const chord of sortedChords) {
-                    cum += chord.lenSteps;
-                    if (targetOffset < cum) return chord;
-                }
-                return sortedChords[sortedChords.length - 1];
+            // ── Assign lyrics → chord regions proportionally ──
+            const assignments = [];
+            let noteIdx = 0;
+            sortedChords.forEach(chord => {
+                const frac          = chord.lenSteps / totalChordSteps;
+                const count         = Math.max(1, Math.round(frac * total));
+                const slice         = lyricNotes.slice(noteIdx, noteIdx + count);
+                slice.forEach((note, li) => assignments.push({ note, chord, localIdx: li, localTotal: slice.length }));
+                noteIdx += slice.length;
+            });
+            // Remaining notes → last chord
+            while (noteIdx < total) {
+                const chord = sortedChords[sortedChords.length - 1];
+                const li    = assignments.filter(a => a.chord === chord).length;
+                assignments.push({ note: lyricNotes[noteIdx], chord, localIdx: li, localTotal: li + 1 });
+                noteIdx++;
+            }
+
+            // ── Process each assigned note ────────────────────
+            // First pass: set startStep, lenSteps, row  (needed to extract motif after first phrase)
+            const processed = [];
+
+            assignments.forEach(({ note, chord, localIdx, localTotal }, globalIdx) => {
+                const ref = drawnNotes.find(n => n.id === note.id);
+                if (!ref) return;
+
+                const lt             = Math.max(1, assignments.filter(a => a.chord === chord).length);
+                const stepsPerNote   = Math.max(1, Math.floor(chord.lenSteps / lt));
+                ref.startStep        = chord.startStep + localIdx * stepsPerNote;
+
+                // Duration: prosody-based fraction of allocated space
+                const sylW = getSyllableWeight(ref.text || '');
+                const legatoFactor = sylW === 'dead'  ? 0.4 + Math.random() * 0.15
+                                   : sylW === 'short' ? 0.55 + Math.random() * 0.2
+                                   :                    0.75 + Math.random() * 0.2;
+                ref.lenSteps = Math.max(1, Math.round(stepsPerNote * legatoFactor));
+
+                processed.push({ ref, chord, globalIdx });
             });
 
-            // Group note indices by chord (use object reference — avoids Date.now() ID collision)
-            const chordNoteMap = new Map();
-            assignments.forEach((chord, idx) => {
-                if (!chordNoteMap.has(chord)) chordNoteMap.set(chord, { chord, indices: [] });
-                chordNoteMap.get(chord).indices.push(idx);
-            });
+            // ── Extract seed motif from first phrase ──────────
+            sessionMotif = extractMotif(processed.map(p => p.ref));
 
-            // ── PLACE + PITCH per chord region ───────────────────────
-            chordNoteMap.forEach(({ chord, indices }) => {
-                const stepsPerNote   = Math.max(2, Math.floor(chord.lenSteps / indices.length));
-                const chordToneRows  = getChordToneRows(chord.chordDef.notes, minRow, maxRow);
-                const diatonicRows   = getDiatonicRows(chord.chordDef, minRow, maxRow);
+            // ── Second pass: assign pitches via Motif/Phase ───
+            processed.forEach(({ ref, chord, globalIdx }) => {
+                const pos        = total > 1 ? globalIdx / (total - 1) : 0.5;
+                const contourRow = getContourRow(contour, pos, minRow, maxRow);
+                const chordToneRows = getChordToneRows(chord.chordDef.notes, minRow, maxRow, chord.chordDef.label);
+                const diatonicRows  = getDiatonicRows(chord.chordDef, minRow, maxRow);
+                const passingPool   = diatonicRows.length > 0 ? diatonicRows : scaleRows;
 
-                indices.forEach((globalIdx, localIdx) => {
-                    const ref = drawnNotes.find(n => n.id === lyricNotes[globalIdx].id);
-                    if (!ref) return;
+                // Block phase: A = statement, B = departure
+                const blockPhase = getBlockPhase(globalIdx, total, sessionBlockPattern);
+                const isA        = blockPhase === 'A';
 
-                    // Reposition note to land inside chord region
-                    ref.startStep = Math.min(ALL_STEPS - 1, chord.startStep + localIdx * stepsPerNote);
+                let newRow;
 
-                    // Duration: fraction of allocated space (prosody-driven)
-                    const sylW   = getSyllableWeight(ref.text);
-                    ref.lenSteps = calcDuration(sylW, stepsPerNote);
-
-                    // Micro-rest on weak beats
-                    if (!stress[globalIdx] && ref.lenSteps > 1 && Math.random() > 0.7) {
-                        ref.lenSteps = Math.max(1, ref.lenSteps - 1);
+                if (sessionMotif && globalIdx > 0) {
+                    // Apply motif transformation
+                    const mode      = isA ? devModeA : devModeB;
+                    const motifData = transformMotif(sessionMotif, mode, chordToneRows, passingPool, contourRow);
+                    const motifIdx  = globalIdx % motifData.pitches.length;
+                    let   candidate = motifData.pitches[motifIdx];
+                    // Clamp to range
+                    candidate = Math.max(minRow, Math.min(maxRow, candidate));
+                    // Snap to chord tone on strong beats
+                    if (stress[globalIdx] && chordToneRows.length > 0) {
+                        candidate = chordToneRows.reduce((a, b) =>
+                            Math.abs(b - candidate) < Math.abs(a - candidate) ? b : a);
                     }
+                    newRow = candidate;
+                } else {
+                    // First note: use pickRowProsody normally
+                    const toneDir   = getThaiToneDirection(ref.text || '');
+                    const beatPool  = stress[globalIdx] ? chordToneRows : passingPool;
+                    newRow = pickRowProsody(toneDir, prevRow, contourRow, beatPool, passingPool);
+                }
 
-                    // Pitch: contour + chord tone + Thai tone direction
-                    const pos        = total > 1 ? globalIdx / (total - 1) : 0.5;
-                    const contourRow = getContourRow(contour, pos, minRow, maxRow);
-                    const toneDir    = getThaiToneDirection(ref.text);
-
-                    // Strong beats → chord tones only
-                    // Weak beats   → diatonic passing tones (in-key, not chromatic)
-                    const beatPool = stress[globalIdx] ? chordToneRows : diatonicRows;
-                    ref.row  = pickRowProsody(toneDir, prevRow, contourRow, beatPool, diatonicRows, scaleRows);
-                    prevRow  = ref.row;
-                });
+                ref.row = newRow;
+                prevRow = newRow;
             });
 
-            // Re-render
+            // ── Re-render ─────────────────────────────────────
             document.querySelectorAll('.note-block').forEach(el => el.remove());
             drawnNotes.forEach(n => renderNote(n));
 
             const status = document.getElementById('composeStatus');
-            status.textContent = `✓ [${contour.toUpperCase()}] ${aiSection}/${aiRange} — ${total} syllables · ${sortedChords.length} chords`;
+            if (status) {
+                status.textContent = `✓ [${contour.toUpperCase()}] ${sessionBlockPattern} · ${devModeA}/${devModeB} · ${aiSection}/${aiRange}`;
+            }
+            updateComposeMelodyBtn();
         }
 
         function aiUndoCompose() {
