@@ -673,6 +673,18 @@
             display: none;
         }
 
+        /* Ghost chord-tone indicators (non-interactive, behind notes) */
+        .chord-ghost {
+            position: absolute;
+            height: calc(var(--note-h) - 4px);
+            top: 2px;
+            background: rgba(212, 247, 51, 0.10);
+            border-left: 2px solid rgba(212, 247, 51, 0.28);
+            border-radius: 0;
+            z-index: 2;
+            pointer-events: none;
+        }
+
         .piano-grid.tool-pointer {
             cursor: default;
         }
@@ -1506,6 +1518,8 @@
                     grid.appendChild(cell);
                 }
             }
+            // Restore ghosts after grid rebuild
+            renderChordGhosts();
         }
 
         // Build chord picker popup grid
@@ -1753,6 +1767,7 @@
             resizeNote = null;
             chordDragRegionId = null;
             chordResizeRegionId = null;
+            renderChordGhosts(); // update ghosts after drag/resize
         });
 
         function positionNoteEl(el, row, startCol, len) {
@@ -2406,6 +2421,7 @@
                     node.textContent = chordDef.label;
                 }
             });
+            renderChordGhosts();
         }
 
         function addChordRegion(step, chordDef) {
@@ -2456,6 +2472,7 @@
                 e.stopPropagation();
                 chordRegions = chordRegions.filter(r => r.id !== id);
                 region.remove();
+                renderChordGhosts();
             });
             region.appendChild(delBtn);
 
@@ -2496,6 +2513,7 @@
 
             // Hide ghost after placing
             if (ghostEl) ghostEl.style.display = 'none';
+            renderChordGhosts();
         }
 
         // Sync Scroll logic obsolete due to CSS sticky
@@ -2567,6 +2585,7 @@
                     e.stopPropagation();
                     chordRegions = chordRegions.filter(reg => reg.id !== r.id);
                     region.remove();
+                    renderChordGhosts();
                 });
                 region.appendChild(delBtn);
 
@@ -2601,6 +2620,7 @@
 
             // Re-render notes
             drawnNotes.forEach(n => renderNote(n));
+            renderChordGhosts();
         }
 
         function clearSequencer() {
@@ -3003,6 +3023,7 @@
             chordRegions.forEach(r => r.el && r.el.remove());
             chordRegions = [];
             document.querySelectorAll('.note-block').forEach(el => el.remove());
+            document.querySelectorAll('.chord-ghost').forEach(el => el.remove());
             drawnNotes = [];
             currentEditingId = null;
             renderPlaylist();
@@ -3170,6 +3191,26 @@
         // Find chord region active at a given step
         function getChordAtStep(step) {
             return chordRegions.find(r => step >= r.startStep && step < r.startStep + r.lenSteps) || null;
+        }
+
+        // Render transparent ghost indicators for every chord-tone row in each chord region
+        function renderChordGhosts() {
+            document.querySelectorAll('.chord-ghost').forEach(el => el.remove());
+            const grid = document.getElementById('pianoGrid');
+            if (!grid) return;
+            const stripOctave = n => n.replace(/\d+$/, '');
+            chordRegions.forEach(r => {
+                const chordBases = (r.chordDef.notes || []).map(stripOctave);
+                ALL_NOTES.forEach((note, rowIdx) => {
+                    if (!chordBases.includes(stripOctave(note.name))) return;
+                    const ghost = document.createElement('div');
+                    ghost.className = 'chord-ghost';
+                    ghost.style.left  = `${r.startStep * STEP_W + 1}px`;
+                    ghost.style.width = `${r.lenSteps  * STEP_W - 2}px`;
+                    ghost.style.top   = `${rowIdx * NOTE_H + 2}px`;
+                    grid.appendChild(ghost);
+                });
+            });
         }
 
         // Get ALL_NOTES row indices for chord tones within range
@@ -3395,6 +3436,7 @@
             chordRegions.forEach(r => r.el && r.el.remove());
             chordRegions = [];
             document.querySelectorAll('.note-block').forEach(el => el.remove());
+            document.querySelectorAll('.chord-ghost').forEach(el => el.remove());
             drawnNotes = [];
             currentEditingId = null;
             renderPlaylist();
