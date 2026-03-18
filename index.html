@@ -1242,6 +1242,9 @@
         let lastPlaylistStep = -1;
         let draggedPlaylistItem = null;
         let playlistPlayheadEl = null;
+        // rAF cancel tokens — ensures only ONE loop runs at a time
+        let transportRafId = null;
+        let playlistRafId = null;
 
         // ─── INIT ────────────────────────────────────────────
         function init() {
@@ -2191,10 +2194,12 @@
             if (isPlaying) {
                 isPlaying = false;
                 document.getElementById('playBtn').textContent = 'PLAY';
+                if (transportRafId) { cancelAnimationFrame(transportRafId); transportRafId = null; }
             } else {
                 isPlaying = true;
                 document.getElementById('playBtn').textContent = 'PAUSE';
-                requestAnimationFrame(transport);
+                if (transportRafId) cancelAnimationFrame(transportRafId);
+                transportRafId = requestAnimationFrame(transport);
             }
         }
 
@@ -2331,7 +2336,7 @@
                 });
             }
 
-            requestAnimationFrame(transport);
+            transportRafId = requestAnimationFrame(transport);
         }
 
         // ─── TRANSPOSE ────────────────────────────────────────
@@ -2914,8 +2919,12 @@
                 item.addEventListener('dragend', onDragEnd);
 
                 item.addEventListener('click', () => {
+                    // Cancel any running transport before starting fresh
+                    isPlaying = false;
+                    if (transportRafId) { cancelAnimationFrame(transportRafId); transportRafId = null; }
                     loadComposition(comp);
-                    if (isPlaying) stopTransport();
+                    playheadPos = 0;
+                    lastStep = -1;
                     togglePlay();
                 });
 
@@ -2996,10 +3005,12 @@
                 } else {
                     playlistStartTime = audioCtx.currentTime;
                 }
-                requestAnimationFrame(playlistTransport);
+                if (playlistRafId) cancelAnimationFrame(playlistRafId);
+                playlistRafId = requestAnimationFrame(playlistTransport);
             } else {
                 document.getElementById('playlistPlayBtn').textContent = 'PLAY';
                 playlistPauseTime = audioCtx.currentTime;
+                if (playlistRafId) { cancelAnimationFrame(playlistRafId); playlistRafId = null; }
             }
         }
 
@@ -3094,7 +3105,7 @@
                 }
             }
             
-            requestAnimationFrame(playlistTransport);
+            playlistRafId = requestAnimationFrame(playlistTransport);
         }
 
 
@@ -3520,23 +3531,20 @@
             const sortedChords     = [...chordRegions].sort((a, b) => a.startStep - b.startStep);
             const totalChordSteps  = sortedChords.reduce((s, r) => s + r.lenSteps, 0);
 
-            // ── Assign lyrics → chord regions proportionally ──
+            // ── Assign lyrics → chord regions (cumulative, no rounding drift) ──
             const assignments = [];
-            let noteIdx = 0;
-            sortedChords.forEach(chord => {
-                const frac          = chord.lenSteps / totalChordSteps;
-                const count         = Math.max(1, Math.round(frac * total));
-                const slice         = lyricNotes.slice(noteIdx, noteIdx + count);
-                slice.forEach((note, li) => assignments.push({ note, chord, localIdx: li, localTotal: slice.length }));
-                noteIdx += slice.length;
+            let cumulative = 0;
+            sortedChords.forEach((chord, ci) => {
+                const startNote = Math.round(cumulative);
+                cumulative += (chord.lenSteps / totalChordSteps) * total;
+                const endNote   = ci === sortedChords.length - 1
+                                    ? total
+                                    : Math.round(cumulative);
+                const slice = lyricNotes.slice(startNote, endNote);
+                slice.forEach((note, li) =>
+                    assignments.push({ note, chord, localIdx: li, localTotal: Math.max(1, slice.length) })
+                );
             });
-            // Remaining notes → last chord
-            while (noteIdx < total) {
-                const chord = sortedChords[sortedChords.length - 1];
-                const li    = assignments.filter(a => a.chord === chord).length;
-                assignments.push({ note: lyricNotes[noteIdx], chord, localIdx: li, localTotal: li + 1 });
-                noteIdx++;
-            }
 
             // ── Process each assigned note ────────────────────
             // First pass: set startStep, lenSteps, row  (needed to extract motif after first phrase)
@@ -3626,8 +3634,78 @@
         // Poll to keep Compose button state updated
         setInterval(updateComposeMelodyBtn, 600);
 
-        // Defer init until layout is complete so clientWidth is accurate
-        window.addEventListener('load', init);
+        // ─── AUTOSAVE to localStorage ────────────────────────────────────
+        const SAVE_KEY = 'melodraf_autosave';
+
+        function saveState() {
+            try {
+                const state = {
+                    drawnNotes:   drawnNotes.map(n => ({ ...n, el: undefined })),
+                    chordRegions: chordRegions.map(r => ({ ...r, el: undefined })),
+                    bpm:          parseInt(document.getElementById('bpmInput').value) || 120,
+                    aiSection:    aiSection,
+                    aiRange:      aiRange,
+                    playlist:     playlist.map(c => ({
+                        ...c,
+                        drawnNotes:   (c.drawnNotes  || []).map(n => ({ ...n, el: undefined })),
+                        chordRegions: (c.chordRegions|| []).map(r => ({ ...r, el: undefined }))
+                    }))
+                };
+                localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+            } catch(e) { /* storage full — ignore */ }
+        }
+
+        function restoreState() {
+            try {
+                const raw = localStorage.getItem(SAVE_KEY);
+                if (!raw) return false;
+                const state = JSON.parse(raw);
+
+                // BPM
+                if (state.bpm) document.getElementById('bpmInput').value = state.bpm;
+
+                // AI settings
+                if (state.aiSection) setSection(state.aiSection);
+                if (state.aiRange)   setRange(state.aiRange);
+
+                // Notes
+                if (Array.isArray(state.drawnNotes)) {
+                    drawnNotes = state.drawnNotes;
+                    drawnNotes.forEach(n => renderNote(n));
+                }
+
+                // Chords
+                if (Array.isArray(state.chordRegions)) {
+                    state.chordRegions.forEach(r => {
+                        addChordRegion(r.startStep, r.chordDef, r.lenSteps);
+                    });
+                }
+
+                // Playlist
+                if (Array.isArray(state.playlist) && state.playlist.length > 0) {
+                    playlist = state.playlist;
+                    playlist.forEach(comp => renderPlaylistItem(comp));
+                }
+
+                return true;
+            } catch(e) { return false; }
+        }
+
+        // Auto-save on any meaningful change
+        function autoSave() { requestAnimationFrame(saveState); }
+        ['mouseup', 'keyup'].forEach(ev =>
+            document.addEventListener(ev, autoSave, { passive: true })
+        );
+
+        // ─── INIT ────────────────────────────────────────────────────────
+        window.addEventListener('load', () => {
+            init();
+            const restored = restoreState();
+            if (restored) {
+                const status = document.getElementById('composeStatus');
+                if (status) status.textContent = '↺ Restored last session';
+            }
+        });
 
     </script>
 
